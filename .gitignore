@@ -5,5 +5,12 @@ __pycache__/
 # Local virtual environment for this project
 gcn_venv/
 
+*mat
+*pkl
+
+Models_for_EEG_on_the_Datasets/
+What to do/
+
+
 # Jupyter checkpoints
 .ipynb_checkpoints/
