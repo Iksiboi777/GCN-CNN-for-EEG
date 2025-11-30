@@ -1,0 +1,9 @@
+# Ignore Python cache and local virtual environment
+__pycache__/
+*.py[cod]
+
+# Local virtual environment for this project
+gcn_venv/
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
