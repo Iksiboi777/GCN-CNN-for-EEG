@@ -8,8 +8,13 @@ gcn_venv/
 *mat
 *pkl
 
-Models_for_EEG_on_the_Datasets/
-What_to_do/
+.venv/
+
+
+Data/
+Dataset_Papers/
+GNN_papers/
+
 
 
 # Jupyter checkpoints
