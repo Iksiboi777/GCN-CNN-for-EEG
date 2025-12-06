@@ -4,9 +4,10 @@ import torch.optim as optim
 from torch.utils.data import TensorDataset, DataLoader
 import numpy as np
 import os
-import multiprocessing
 import argparse
 import time
+import copy
+from sklearn.metrics import classification_report, confusion_matrix, f1_score # ADDED
 
 from Models.var_A import CNNGCNModel
 from Models.graph_construction import get_knn_adjacency_matrix
@@ -14,9 +15,11 @@ from Models.graph_construction import get_knn_adjacency_matrix
 # --- Configuration ---
 DATA_FOLDER = "Data/Raw_Data_For_CNN"
 LOCS_FILE = "channel_62_pos.locs"
-BATCH_SIZE = 32
+BATCH_SIZE = 64
 EPOCHS = 50
 LEARNING_RATE = 0.001
+WEIGHT_DECAY = 1e-3
+PATIENCE = 15 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def get_args():
@@ -26,12 +29,12 @@ def get_args():
     parser.add_argument('--test_subject', type=int, default=1, 
                         help="ID of the subject to leave out for testing (only for subject_independent mode)")
     parser.add_argument('--epochs', type=int, default=50, help="Number of training epochs")
-    parser.add_argument('--batch_size', type=int, default=32, help="Batch size")
+    parser.add_argument('--batch_size', type=int, default=BATCH_SIZE, help="Batch size") # Updated default
     return parser.parse_args()
 
 def main():
     args = get_args()
-    num_workers = min(multiprocessing.cpu_count(), 4)
+    num_workers = 0 
     print(f"Using device: {DEVICE} with {num_workers} workers.")
     print(f"Mode: {args.mode}")
 
@@ -50,44 +53,46 @@ def main():
         print("Splitting data (Train: Sess 1+2, Test: Sess 3)...")
         train_mask = (sessions == 1) | (sessions == 2)
         test_mask = (sessions == 3)
-        
     elif args.mode == 'sub_indep':
         print(f"Splitting data (LOSO): Leaving out Subject {args.test_subject}...")
         train_mask = (subjects != args.test_subject)
         test_mask = (subjects == args.test_subject)
         
-    # Apply Mask
-    X_train = X_tensor[train_mask]
-    y_train = y_tensor[train_mask]
-    X_test = X_tensor[test_mask]
-    y_test = y_tensor[test_mask]
+    X_train, y_train = X_tensor[train_mask], y_tensor[train_mask]
+    X_test, y_test = X_tensor[test_mask], y_tensor[test_mask]
     
     print(f"Train samples: {len(X_train)}, Test samples: {len(X_test)}")
     
-    # Create DataLoaders
-    train_dataset = TensorDataset(X_train, y_train)
-    test_dataset = TensorDataset(X_test, y_test)
-    
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, 
-                              num_workers=num_workers, persistent_workers=True, prefetch_factor=2)
-    test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, 
-                             num_workers=num_workers, persistent_workers=True, prefetch_factor=2)
+    train_loader = DataLoader(TensorDataset(X_train, y_train), batch_size=args.batch_size, shuffle=True, num_workers=num_workers)
+    test_loader = DataLoader(TensorDataset(X_test, y_test), batch_size=args.batch_size, shuffle=False, num_workers=num_workers)
 
     # 3. Construct Graph
     print("Constructing Graph...")
-    edge_index = get_knn_adjacency_matrix(LOCS_FILE, k=5)
-    edge_index = edge_index.to(DEVICE)
+    base_edge_index = get_knn_adjacency_matrix(LOCS_FILE, k=5).to(DEVICE)
     
     # 4. Initialize Model
     model = CNNGCNModel(num_nodes=62, time_steps=400).to(DEVICE)
-    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
+    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=PATIENCE)
     criterion = nn.CrossEntropyLoss()
     
     # 5. Training Loop
     print("Starting Training...")
     start_time = time.time()
 
+    best_val_loss = float('inf')
+    patience_counter = 0
+    best_model_wts = copy.deepcopy(model.state_dict())
+
+    history = {'train_loss': [], 'train_acc': [], 'val_loss': [], 'val_acc': [], 'lr': []}
+
     for epoch in range(args.epochs):
+        epoch_start = time.time()
+
+        if torch.cuda.is_available():
+            # torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+
         model.train()
         total_loss = 0
         correct = 0
@@ -95,7 +100,13 @@ def main():
         
         for batch_X, batch_y in train_loader:
             batch_X, batch_y = batch_X.to(DEVICE), batch_y.to(DEVICE)
-            batch_idx = torch.arange(batch_X.size(0), device=DEVICE).repeat_interleave(62)
+            curr_batch_size = batch_X.size(0)
+            batch_idx = torch.arange(curr_batch_size, device=DEVICE).repeat_interleave(62)
+            
+            # Expand edge_index for the batch
+            # We replicate the graph structure for each sample in the batch
+            offsets = (torch.arange(curr_batch_size, device=DEVICE) * 62).view(-1, 1, 1)
+            edge_index = (base_edge_index.unsqueeze(0) + offsets).permute(1, 0, 2).reshape(2, -1)
             
             optimizer.zero_grad()
             outputs = model(batch_X, edge_index, batch_idx)
@@ -109,27 +120,81 @@ def main():
             correct += (predicted == batch_y).sum().item()
             
         train_acc = 100 * correct / total
-        print(f"Epoch [{epoch+1}/{args.epochs}], Loss: {total_loss/len(train_loader):.4f}, Train Acc: {train_acc:.2f}%")
+        avg_train_loss = total_loss / len(train_loader)
         
-        if (epoch + 1) % 5 == 0:
-            evaluate(model, test_loader, edge_index, criterion)
+        val_loss, val_acc = evaluate(model, test_loader, base_edge_index, criterion)
+        
+        epoch_duration = time.time() - epoch_start
+        current_lr = optimizer.param_groups[0]['lr']
+        
+        history['train_loss'].append(avg_train_loss)
+        history['train_acc'].append(train_acc)
+        history['val_loss'].append(val_loss)
+        history['val_acc'].append(val_acc)
+        history['lr'].append(current_lr)
+        
+        print(f"Epoch [{epoch+1}/{args.epochs}] ({epoch_duration:.1f}s) | Train Loss: {avg_train_loss:.4f} Acc: {train_acc:.2f}% | Val Loss: {val_loss:.4f} Acc: {val_acc:.2f}%")
+        
+        scheduler.step(val_loss)
+        
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            best_model_wts = copy.deepcopy(model.state_dict())
+            patience_counter = 0
+        else:
+            patience_counter += 1
+            print(f"EarlyStopping counter: {patience_counter} out of {PATIENCE}")
+            
+        if patience_counter >= PATIENCE:
+            print("Early stopping triggered.")
+            break
 
-    end_time = time.time()  # <--- End Timer
-    elapsed_time = end_time - start_time
-    print(f"\nTraining Finished in {elapsed_time:.2f} seconds ({elapsed_time/60:.2f} minutes).")
+    # --- SAVE & EVALUATE BEST MODEL ---
+    print("\nLoading best model weights...")
+    model.load_state_dict(best_model_wts)
+    
+    # Save to disk
+    model_path = os.path.join(DATA_FOLDER, f"best_model_{args.mode}.pth")
+    torch.save(model.state_dict(), model_path)
+    print(f"Best model saved to {model_path}")
+
+    # Detailed Evaluation
+    print("\n--- Final Evaluation on Test Set ---")
+    test_loss, test_acc, preds, true_labels = evaluate(model, test_loader, base_edge_index, criterion, return_preds=True)
+    
+    print(f"Test Loss: {test_loss:.4f} | Test Acc: {test_acc:.2f}%")
+    print("\nClassification Report:")
+    print(classification_report(true_labels, preds, target_names=['Negative', 'Neutral', 'Positive']))
+    print("\nConfusion Matrix:")
+    print(confusion_matrix(true_labels, preds))
+
+    # Save History
+    history_path = os.path.join(DATA_FOLDER, f"training_history_{args.mode}.npy")
+    np.save(history_path, history)
+    print(f"History saved to {history_path}")
+    
+    print(f"Total Time: {time.time() - start_time:.2f}s")
 
 
-def evaluate(model, loader, edge_index, criterion):
+def evaluate(model, loader, base_edge_index, criterion, return_preds=False):
     model.eval()
     correct = 0
     total = 0
     val_loss = 0
+    all_preds = []
+    all_labels = []
     
     with torch.no_grad():
         for batch_X, batch_y in loader:
             batch_X, batch_y = batch_X.to(DEVICE), batch_y.to(DEVICE)
-            batch_idx = torch.arange(batch_X.size(0), device=DEVICE).repeat_interleave(62)
+            curr_batch_size = batch_X.size(0)
+            batch_idx = torch.arange(curr_batch_size, device=DEVICE).repeat_interleave(62)
             
+            # Expand edge_index for the batch
+            offsets = (torch.arange(curr_batch_size, device=DEVICE) * 62).view(-1, 1, 1)
+            edge_index = (base_edge_index.unsqueeze(0) + offsets).permute(1, 0, 2).reshape(2, -1)
+            
+
             outputs = model(batch_X, edge_index, batch_idx)
             loss = criterion(outputs, batch_y)
             val_loss += loss.item()
@@ -138,7 +203,16 @@ def evaluate(model, loader, edge_index, criterion):
             total += batch_y.size(0)
             correct += (predicted == batch_y).sum().item()
             
-    print(f"Validation Loss: {val_loss/len(loader):.4f}, Validation Acc: {100 * correct / total:.2f}%")
+            if return_preds:
+                all_preds.extend(predicted.cpu().numpy())
+                all_labels.extend(batch_y.cpu().numpy())
+            
+    acc = 100 * correct / total
+    avg_loss = val_loss / len(loader)
+    
+    if return_preds:
+        return avg_loss, acc, all_preds, all_labels
+    return avg_loss, acc
 
 if __name__ == "__main__":
     main()

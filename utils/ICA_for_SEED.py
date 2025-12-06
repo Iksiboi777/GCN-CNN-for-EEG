@@ -6,8 +6,8 @@ from mne.preprocessing import ICA
 import mne_icalabel
 
 # --- Configuration ---
-input_folder = "Preprocessed_EEG"
-output_folder = "Cleaned_EEG_ICA"
+input_folder = "../Data/Preprocessed_EEG"
+output_folder = "../Data/Cleaned_EEG_ICA"
 os.makedirs(output_folder, exist_ok=True)
 
 # Define Metadata
@@ -21,7 +21,7 @@ ch_names = [
 ]
 ch_types = ['eeg'] * len(ch_names)
 info = mne.create_info(ch_names=ch_names, sfreq=sfreq, ch_types=ch_types)
-montage = mne.channels.read_custom_montage('channel_62_pos.locs')
+montage = mne.channels.read_custom_montage('../channel_62_pos.locs')
 
 # --- Processing Loop ---
 # Get all .mat files

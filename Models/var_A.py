@@ -13,28 +13,46 @@ class Conv1dBlock(nn.Module):
     def __init__(self, in_channels=1, out_channels=64):
         super(Conv1dBlock, self).__init__()
         
-        # Layer 1: Conv1d(1, 32, k=7, s=2, p=3)
-        self.conv1 = nn.Conv1d(in_channels, 32, kernel_size=7, stride=2, padding=3)
-        self.bn1 = nn.BatchNorm1d(32)
+        # Layer 1: Conv1d(1, 64, k=15, s=1, p=7) - Wider first layer
+        self.conv1 = nn.Conv1d(in_channels, 64, kernel_size=15, stride=1, padding=7)
+        self.bn1 = nn.BatchNorm1d(64)
         
-        # Layer 2: Conv1d(32, 64, k=5, s=2, p=2)
-        self.conv2 = nn.Conv1d(32, 64, kernel_size=5, stride=2, padding=2)
-        self.bn2 = nn.BatchNorm1d(64)
+        # Layer 2: Conv1d(64, 128, k=5, s=1, p=2)
+        self.conv2 = nn.Conv1d(64, 128, kernel_size=5, stride=1, padding=2)
+        self.bn2 = nn.BatchNorm1d(128)
         
+        # Removed Layer 3 to simplify model
+        
+        self.pool = nn.MaxPool1d(2)
+        self.global_pool = nn.AdaptiveAvgPool1d(1)
+        
+        # RESTORED DROPOUT
+        self.dropout = nn.Dropout(0.5)
+
         # Final Linear Projection
-        self.fc = nn.Linear(64, out_channels)
+        self.fc = nn.Linear(128, out_channels)
+        self.out_bn = nn.BatchNorm1d(out_channels)
 
     def forward(self, x):
-        # x shape: (Batch * Nodes, 1, 400)
-        
-        x = F.relu(self.bn1(self.conv1(x))) # -> (Batch*Nodes, 32, 200)
-        x = F.relu(self.bn2(self.conv2(x))) # -> (Batch*Nodes, 64, 100)
-        
-        # Global Average Pooling over time
-        x = x.mean(dim=2) # -> (Batch*Nodes, 64)
+        # Add Gaussian Noise during training to prevent overfitting
+        if self.training:
+            noise = torch.randn_like(x) * 0.01 # 1% Noise
+            x = x + noise
+            
+        # Layer 1
+        x = F.relu(self.bn1(self.conv1(x))) 
+        x = self.pool(x)
+
+        # Layer 2
+        x = F.relu(self.bn2(self.conv2(x))) 
+        x = self.global_pool(x).squeeze(-1) # Global pool after 2nd layer
+
+        x = self.dropout(x) # RESTORED
         
         # Linear Projection
-        x = self.fc(x) # -> (Batch*Nodes, 64)
+        x = self.fc(x) 
+        x = self.out_bn(x)
+
         return x
 
 class GCNBlock(nn.Module):
@@ -47,57 +65,56 @@ class GCNBlock(nn.Module):
         super(GCNBlock, self).__init__()
         
         self.gcn1 = GCNConv(in_features, hidden_dim)
+        self.bn1 = nn.BatchNorm1d(hidden_dim)
+
         self.gcn2 = GCNConv(hidden_dim, hidden_dim)
+        self.bn2 = nn.BatchNorm1d(hidden_dim)
+
+        self.gcn3 = GCNConv(hidden_dim, hidden_dim)
+        self.bn3 = nn.BatchNorm1d(hidden_dim)
         
         self.fc = nn.Linear(hidden_dim, num_classes)
+        
+        # RESTORED DROPOUT
         self.dropout = nn.Dropout(0.5)
 
     def forward(self, x, edge_index, batch_index):
-        # x: (Total_Nodes, 64)
-        # edge_index: (2, Total_Edges)
-        # batch_index: (Total_Nodes,) - tells which node belongs to which graph in the batch
-        
         # GCN Layer 1
         x = self.gcn1(x, edge_index)
+        x = self.bn1(x)
         x = F.relu(x)
-        x = self.dropout(x)
+        x = self.dropout(x) # RESTORED
         
         # GCN Layer 2
         x = self.gcn2(x, edge_index)
+        x = self.bn2(x)
         x = F.relu(x)
-        x = self.dropout(x)
+        x = self.dropout(x) # RESTORED
         
-        # Global Pooling (Aggregates node features to 1 graph vector)
-        x = global_mean_pool(x, batch_index) # -> (Batch_Size, 64)
+        # GCN Layer 3
+        x = self.gcn3(x, edge_index)
+        x = self.bn3(x)
+        x = F.relu(x)
+        
+        # Global Pooling
+        x = global_mean_pool(x, batch_index) 
         
         # Classifier
-        x = self.fc(x) # -> (Batch_Size, 3)
+        x = self.fc(x)
         return x
 
 class CNNGCNModel(nn.Module):
     def __init__(self, num_nodes=62, time_steps=400):
         super(CNNGCNModel, self).__init__()
-        
         self.num_nodes = num_nodes
-        self.cnn = Conv1dBlock()
-        self.gcn = GCNBlock()
+        self.cnn = Conv1dBlock(out_channels=128)
+        self.gcn = GCNBlock(in_features=128, hidden_dim=128)
 
     def forward(self, x, edge_index, batch_index):
-        """
-        x: (Batch_Size, Num_Nodes, Time_Steps) -> Raw EEG
-        edge_index: (2, Num_Edges) -> Graph Connectivity
-        batch_index: (Batch_Size * Num_Nodes,) -> Batch vector for PyG
-        """
         batch_size = x.size(0)
-        
-        # 1. Reshape for CNN: Treat every node as an independent sample
-        # (Batch, Nodes, Time) -> (Batch * Nodes, 1, Time)
         x = x.view(batch_size * self.num_nodes, 1, -1)
         
-        # 2. Extract Temporal Features
-        node_embeddings = self.cnn(x) # -> (Batch * Nodes, 64)
-        
-        # 3. Apply GCN
+        node_embeddings = self.cnn(x) 
         out = self.gcn(node_embeddings, edge_index, batch_index)
         
         return out
