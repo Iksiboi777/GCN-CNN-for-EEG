@@ -14,8 +14,8 @@ gcn_venv/
 Data/
 Dataset_Papers/
 GNN_papers/
-
-*pt
+Results/
+What_to_do/
 
 
 # Jupyter checkpoints

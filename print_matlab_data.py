@@ -1,3 +1,5 @@
+import scipy.io as sio
+
 # Recursively print the structure of nested objects
 def print_structure(obj, indent=0, name="root"):
     prefix = " " * indent
@@ -48,3 +50,6 @@ def print_full_tree(obj, indent=0, name="root", max_depth=20):
         print(f"{prefix}{name} (np.ndarray, shape={obj.shape}, dtype={obj.dtype})")
     else:
         print(f"{prefix}{name}: {type(obj).__name__} - {repr(obj)[:60]}")
+
+file = sio.loadmat("Data/ExtractedFeatures_1s/1_20131027.mat")
+print_full_tree(file)

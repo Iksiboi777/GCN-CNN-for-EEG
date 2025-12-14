@@ -9,7 +9,7 @@ from Models.graph_construction import get_knn_adjacency_matrix
 # Config
 DATA_FOLDER = "Data/Raw_Data_For_CNN"
 LOCS_FILE = "channel_62_pos.locs"
-MODEL_PATH = os.path.join(DATA_FOLDER, "best_model_sub_dep.pth") # Adjust if needed
+MODEL_PATH = os.path.join(DATA_FOLDER, "best_model_sub_dep_2.pth") # Adjust if needed
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def main():

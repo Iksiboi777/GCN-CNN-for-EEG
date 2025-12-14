@@ -7,8 +7,11 @@ import mne_icalabel
 
 # --- Configuration ---
 input_folder = "../Data/Preprocessed_EEG"
-output_folder = "../Data/Cleaned_EEG_ICA"
-os.makedirs(output_folder, exist_ok=True)
+output_folder_standard = "../Data/Cleaned_EEG_ICA_1_49"
+output_folder_gamma = "../Data/Cleaned_EEG_ICA_50_75"
+
+os.makedirs(output_folder_standard, exist_ok=True)
+os.makedirs(output_folder_gamma, exist_ok=True)
 
 # Define Metadata
 sfreq = 200
@@ -37,12 +40,14 @@ for file_name in files:
         print(f"Error loading {file_name}: {e}")
         continue
         
-    cleaned_data_dict = {}
+    cleaned_data_dict_standard = {}
+    cleaned_data_dict_gamma = {}
     
     # Copy non-EEG keys (like labels) to the new dictionary
     for key in mat_data:
         if not key.startswith('__') and not key.startswith('eeg_') and not key.startswith('djc_eeg'):
-             cleaned_data_dict[key] = mat_data[key]
+             cleaned_data_dict_standard[key] = mat_data[key]
+             cleaned_data_dict_gamma[key] = mat_data[key]
 
     # Iterate over trials (eeg_1 ... eeg_15)
     # Note: Keys might be 'eeg_1' or 'djc_eeg1' depending on the file version. 
@@ -86,12 +91,22 @@ for file_name in files:
         # Apply to original data
         ica.apply(raw, exclude=exclude_idx, verbose=False)
         
-        # Store cleaned data back to dictionary
-        cleaned_data_dict[key] = raw.get_data()
+        # 1. Standard Band (1-49 Hz)
+        raw_standard = raw.copy().filter(1.0, 49.0, fir_design='firwin', verbose=False)
+        cleaned_data_dict_standard[key] = raw_standard.get_data()
         
-    # Save the new .mat file
-    save_path = os.path.join(output_folder, file_name)
-    sio.savemat(save_path, cleaned_data_dict)
-    print(f"Saved cleaned file: {save_path}")
+        # 2. Gamma Band (50-75 Hz)
+        raw_gamma = raw.copy().filter(50.0, 75.0, fir_design='firwin', verbose=False)
+        cleaned_data_dict_gamma[key] = raw_gamma.get_data()
+        
+    # Save standard
+    save_path_std = os.path.join(output_folder_standard, file_name)
+    sio.savemat(save_path_std, cleaned_data_dict_standard)
+    print(f"Saved standard file: {save_path_std}")
+    
+    # Save gamma
+    save_path_gamma = os.path.join(output_folder_gamma, file_name)
+    sio.savemat(save_path_gamma, cleaned_data_dict_gamma)
+    print(f"Saved gamma file: {save_path_gamma}")
 
 print("All files processed.")

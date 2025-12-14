@@ -7,18 +7,21 @@ import os
 import argparse
 import time
 import copy
-from sklearn.metrics import classification_report, confusion_matrix, f1_score # ADDED
+from sklearn.metrics import classification_report, confusion_matrix, f1_score
 
 from Models.var_A import CNNGCNModel
 from Models.graph_construction import get_knn_adjacency_matrix
 
 # --- Configuration ---
-DATA_FOLDER = "Data/Raw_Data_For_CNN"
+DATA_FOLDER = "Data/Raw_Data_w_Bands"
+OUTPUT_FOLDER = "Models/Trained_Models_w_Bands"
+os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+
 LOCS_FILE = "channel_62_pos.locs"
-BATCH_SIZE = 64
+BATCH_SIZE = 16
 EPOCHS = 50
-LEARNING_RATE = 0.001
-WEIGHT_DECAY = 1e-3
+LEARNING_RATE = 0.0005 # Kept low
+WEIGHT_DECAY = 1e-4
 PATIENCE = 15 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -29,21 +32,23 @@ def get_args():
     parser.add_argument('--test_subject', type=int, default=1, 
                         help="ID of the subject to leave out for testing (only for subject_independent mode)")
     parser.add_argument('--epochs', type=int, default=50, help="Number of training epochs")
-    parser.add_argument('--batch_size', type=int, default=BATCH_SIZE, help="Batch size") # Updated default
+    parser.add_argument('--batch_size', type=int, default=BATCH_SIZE, help="Batch size")
+    parser.add_argument('--band', type=str, default='standard', choices=['standard', 'gamma'], 
+                        help="Frequency band to use: 'standard' (1-49Hz) or 'gamma' (50-75Hz)")
     return parser.parse_args()
 
 def main():
     args = get_args()
     num_workers = 0 
     print(f"Using device: {DEVICE} with {num_workers} workers.")
-    print(f"Mode: {args.mode}")
+    print(f"Mode: {args.mode} | Band: {args.band}")
 
     # 1. Load Data
-    print("Loading data...")
-    X = np.load(os.path.join(DATA_FOLDER, "X_raw.npy")) 
-    y = np.load(os.path.join(DATA_FOLDER, "y_labels.npy"))
-    sessions = np.load(os.path.join(DATA_FOLDER, "sessions.npy"))
-    subjects = np.load(os.path.join(DATA_FOLDER, "subjects.npy"))
+    print(f"Loading data for band: {args.band}...")
+    X = np.load(os.path.join(DATA_FOLDER, f"X_raw_{args.band}.npy")) 
+    y = np.load(os.path.join(DATA_FOLDER, f"y_labels_{args.band}.npy"))
+    sessions = np.load(os.path.join(DATA_FOLDER, f"sessions_{args.band}.npy"))
+    subjects = np.load(os.path.join(DATA_FOLDER, f"subjects_{args.band}.npy"))
     
     X_tensor = torch.tensor(X, dtype=torch.float32)
     y_tensor = torch.tensor(y, dtype=torch.long)
@@ -72,9 +77,26 @@ def main():
     
     # 4. Initialize Model
     model = CNNGCNModel(num_nodes=62, time_steps=400).to(DEVICE)
+
+    # Verify output dimension
+    print("Verifying model output shape...")
+    dummy_input = torch.randn(2, 62, 400).to(DEVICE)
+    dummy_batch = torch.arange(2, device=DEVICE).repeat_interleave(62)
+    offsets = (torch.arange(2, device=DEVICE) * 62).view(-1, 1, 1)
+    dummy_edge_expanded = (base_edge_index.unsqueeze(0) + offsets).permute(1, 0, 2).reshape(2, -1)
+
+    with torch.no_grad():
+        dummy_out = model(dummy_input, dummy_edge_expanded, dummy_batch)
+    print(f"Model Output Shape: {dummy_out.shape} (Should be [2, 3])")
+
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=PATIENCE)
-    criterion = nn.CrossEntropyLoss()
+    
+    # NUCLEAR OPTION: Force the model to care about all classes equally or slightly boost class 2
+    # Even if data is balanced, this helps break the "ignore class 2" habit.
+    # Weights: [1.0, 1.0, 1.2] -> 20% higher penalty for missing Class 2 (Positive)
+    class_weights = torch.tensor([1.0, 1.0, 1.2]).to(DEVICE) 
+    criterion = nn.CrossEntropyLoss(weight=class_weights)
     
     # 5. Training Loop
     print("Starting Training...")
@@ -89,10 +111,6 @@ def main():
     for epoch in range(args.epochs):
         epoch_start = time.time()
 
-        if torch.cuda.is_available():
-            # torch.cuda.synchronize()
-            torch.cuda.empty_cache()
-
         model.train()
         total_loss = 0
         correct = 0
@@ -103,8 +121,6 @@ def main():
             curr_batch_size = batch_X.size(0)
             batch_idx = torch.arange(curr_batch_size, device=DEVICE).repeat_interleave(62)
             
-            # Expand edge_index for the batch
-            # We replicate the graph structure for each sample in the batch
             offsets = (torch.arange(curr_batch_size, device=DEVICE) * 62).view(-1, 1, 1)
             edge_index = (base_edge_index.unsqueeze(0) + offsets).permute(1, 0, 2).reshape(2, -1)
             
@@ -122,7 +138,8 @@ def main():
         train_acc = 100 * correct / total
         avg_train_loss = total_loss / len(train_loader)
         
-        val_loss, val_acc = evaluate(model, test_loader, base_edge_index, criterion)
+        # Evaluate with detailed report every epoch
+        val_loss, val_acc, val_preds, val_labels = evaluate(model, test_loader, base_edge_index, criterion, return_preds=True)
         
         epoch_duration = time.time() - epoch_start
         current_lr = optimizer.param_groups[0]['lr']
@@ -134,6 +151,9 @@ def main():
         history['lr'].append(current_lr)
         
         print(f"Epoch [{epoch+1}/{args.epochs}] ({epoch_duration:.1f}s) | Train Loss: {avg_train_loss:.4f} Acc: {train_acc:.2f}% | Val Loss: {val_loss:.4f} Acc: {val_acc:.2f}%")
+        
+        # PRINT REPORT EVERY EPOCH to see if Class 2 is being predicted
+        print(classification_report(val_labels, val_preds, target_names=['Negative', 'Neutral', 'Positive'], zero_division=0))
         
         scheduler.step(val_loss)
         
@@ -154,7 +174,7 @@ def main():
     model.load_state_dict(best_model_wts)
     
     # Save to disk
-    model_path = os.path.join(DATA_FOLDER, f"best_model_{args.mode}.pth")
+    model_path = os.path.join(OUTPUT_FOLDER, f"best_model_{args.mode}_{args.band}.pth")
     torch.save(model.state_dict(), model_path)
     print(f"Best model saved to {model_path}")
 
@@ -169,9 +189,17 @@ def main():
     print(confusion_matrix(true_labels, preds))
 
     # Save History
-    history_path = os.path.join(DATA_FOLDER, f"training_history_{args.mode}.npy")
+    history_path = os.path.join(OUTPUT_FOLDER, f"training_history_{args.mode}_{args.band}.npy")
     np.save(history_path, history)
     print(f"History saved to {history_path}")
+    
+    # Save Detailed Predictions for Debugging
+    debug_data = {
+        'y_true': true_labels,
+        'y_pred': preds
+    }
+    np.save(os.path.join(OUTPUT_FOLDER, f"debug_predictions_{args.mode}_{args.band}.npy"), debug_data)
+    print(f"Debug predictions saved to debug_predictions_{args.mode}_{args.band}.npy")
     
     print(f"Total Time: {time.time() - start_time:.2f}s")
 
