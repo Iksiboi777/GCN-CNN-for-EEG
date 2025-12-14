@@ -17,10 +17,10 @@ from utils.training_utils import train_model_with_interrupt
 
 # --- Configuration ---
 LOCS_FILE = "channel_62_pos.locs"
-BATCH_SIZE = 128
+BATCH_SIZE = 64
 EPOCHS = 120
 LEARNING_RATE = 0.0005
-WEIGHT_DECAY = 0 # Stronger regularization
+WEIGHT_DECAY = 1e-3 # Stronger regularization
 PATIENCE = 30
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 CONFIG_FILE = "run_config.json"
@@ -91,21 +91,21 @@ def load_de_data(data_folder, label_file):
         if subj_id not in subject_files: subject_files[subj_id] = []
         subject_files[subj_id].append(f)
 
-    # # 1. Load the weights
+    # 1. Load the weights
     # weights_file = "Params/subject_band_weights.json"
     # if os.path.exists(weights_file):
     #     with open(weights_file, 'r') as f:
     #         band_weights = json.load(f)
     #     print("Loaded subject-specific band weights.")
     # else:
-    #     band_weights = None
-    #     print("Warning: No band weights found. Using raw data.")
+    band_weights = None
+    print("Warning: Manual band weights DISABLED. Using raw data for Learnable Attention.")
         
     for subj_id in sorted(subject_files.keys()):
         # if band_weights and str(subj_id) in band_weights:
         #     weights = np.array(band_weights[str(subj_id)]) # (5,)
         # else:
-        #   weights = np.ones(5) # No weighting
+        # weights = np.ones(5) # No weighting - REMOVED
 
         s_files = sorted(subject_files[subj_id], key=lambda x: x.split('_')[1])
         for sess_idx, fname in enumerate(s_files):
@@ -118,7 +118,7 @@ def load_de_data(data_folder, label_file):
                 if key not in mat: continue
                 data = mat[key]
                 data = np.transpose(data, (1, 0, 2))
-                # data = data * weights # Apply band weights
+                # data = data * weights # REMOVED: Model learns weights now
                 num_samples = data.shape[0]
                 X_list.append(data)
                 y_list.append(np.full(num_samples, mapped_labels[trial_i - 1]))
@@ -240,11 +240,21 @@ def main():
     run_id = get_next_run_id(args.window_size)
     
     model_name = f"{args.model_type}_DE_{args.window_size}"
-    run_name = f"Attempt_{run_id}_{args.split_strategy}"
+
+    if args.mode == 'sub_dep':
+        run_name = f"Attempt_{run_id}_{args.split_strategy}"
+    else:
+        # For LOSO, include the test subject in the run name
+        run_name = f"Attempt_{run_id}_LOSO_sub{args.test_subject}"
     
     results_dir = os.path.join("Results", model_name, run_name)
     params_dir = os.path.join("Params", model_name, run_name)
     errors_dir = os.path.join("Errors", model_name, run_name)
+
+    # Ensure these directories exist
+    os.makedirs(results_dir, exist_ok=True)
+    os.makedirs(params_dir, exist_ok=True)
+    os.makedirs(errors_dir, exist_ok=True)
     
     print(f"Directories:")
     print(f"  Results: {results_dir}")
@@ -264,6 +274,9 @@ def main():
             
             X_train, y_train = X_tensor[train_mask], y_tensor[train_mask]
             X_test, y_test = X_tensor[test_mask], y_tensor[test_mask]
+            
+            train_loader = DataLoader(TensorDataset(X_train, y_train), batch_size=args.batch_size, shuffle=True)
+            test_loader = DataLoader(TensorDataset(X_test, y_test), batch_size=args.batch_size, shuffle=False)
             
         elif args.split_strategy == 'random':
             print("  -> Strategy: Random Split (80% Train, 20% Test, shuffled across sessions)")
@@ -312,17 +325,40 @@ def main():
             X_test, y_test = X_tensor[test_mask], y_tensor[test_mask]
             
             print(f"     Train Samples: {len(X_train)} | Test Samples: {len(X_test)}")
+            
+            train_loader = DataLoader(TensorDataset(X_train, y_train), batch_size=args.batch_size, shuffle=True)
+            test_loader = DataLoader(TensorDataset(X_test, y_test), batch_size=args.batch_size, shuffle=False)
 
     elif args.mode == 'sub_indep':
-        train_mask = (subjects != args.test_subject)
+        print(f"  -> Strategy: Leave-One-Subject-Out (Test Subject: {args.test_subject})")
+        
+        # 1. Identify Test Subject
         test_mask = (subjects == args.test_subject)
         
+        # 2. Identify Validation Subject (Pick one from the remaining subjects)
+        # We pick the subject with ID = (test_subject % 15) + 1
+        # e.g., if Test=1, Val=2. If Test=15, Val=1.
+        val_subject_id = (args.test_subject % 15) + 1
+        val_mask = (subjects == val_subject_id)
+        
+        # 3. Identify Train Subjects (Everyone else)
+        train_mask = ~(test_mask | val_mask)
+        
+        print(f"     Train Subjects: All except {args.test_subject} and {val_subject_id}")
+        print(f"     Validation Subject: {val_subject_id}")
+        print(f"     Test Subject: {args.test_subject}")
+        
         X_train, y_train = X_tensor[train_mask], y_tensor[train_mask]
+        X_val, y_val = X_tensor[val_mask], y_tensor[val_mask]
         X_test, y_test = X_tensor[test_mask], y_tensor[test_mask]
+        
+        # Create Loaders
+        train_loader = DataLoader(TensorDataset(X_train, y_train), batch_size=args.batch_size, shuffle=True)
+        # We use Val loader for Early Stopping
+        test_loader = DataLoader(TensorDataset(X_val, y_val), batch_size=args.batch_size, shuffle=False)
+        # We keep the real Test loader for final evaluation
+        final_test_loader = DataLoader(TensorDataset(X_test, y_test), batch_size=args.batch_size, shuffle=False)
     
-    train_loader = DataLoader(TensorDataset(X_train, y_train), batch_size=args.batch_size, shuffle=True)
-    test_loader = DataLoader(TensorDataset(X_test, y_test), batch_size=args.batch_size, shuffle=False)
-
     print("Constructing Graph...")
     base_edge_index = get_knn_adjacency_matrix(LOCS_FILE, k=5).to(DEVICE)
     
@@ -346,6 +382,7 @@ def main():
     class_weights = torch.tensor([1.0, 1.0, 1.0]).to(DEVICE)
     criterion = nn.CrossEntropyLoss(weight=class_weights)
 
+    # Note: In sub_indep mode, 'test_loader' passed here is actually the Validation Loader
     train_model_with_interrupt(
         model=model,
         train_loader=train_loader,
@@ -361,6 +398,22 @@ def main():
         errors_dir=errors_dir,
         base_edge_index=base_edge_index,
         evaluate_fn=evaluate)
+
+    # --- Final Test for LOSO ---
+    if args.mode == 'sub_indep':
+        print("\n>>> Running Final Test on Held-out Subject...")
+        # Load best model
+        best_model_path = os.path.join(params_dir, "best_model_checkpoint.pth")
+        if os.path.exists(best_model_path):
+            model.load_state_dict(torch.load(best_model_path))
+            print("Loaded best model from validation phase.")
+        
+        test_loss, test_acc, preds, true_labels = evaluate(model, final_test_loader, base_edge_index, criterion, DEVICE, return_preds=True)
+        print(f"FINAL TEST RESULTS (Subject {args.test_subject}):")
+        print(f"Loss: {test_loss:.4f} | Accuracy: {test_acc:.2f}%")
+        
+        # Save specific test results
+        np.save(os.path.join(results_dir, f"final_test_preds_sub{args.test_subject}.npy"), {'preds': preds, 'true': true_labels})
 
 if __name__ == "__main__":
     main()
