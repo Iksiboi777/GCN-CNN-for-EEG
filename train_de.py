@@ -14,9 +14,11 @@ from Models.var_B import GCN_DE_Model
 from Models.var_C import DGCNN_Model
 from Models.graph_construction import get_knn_adjacency_matrix
 from utils.training_utils import train_model_with_interrupt
+from utils.feature_engineering import SmartPreprocessor, get_standard_channel_names
+from sklearn.preprocessing import StandardScaler, RobustScaler
 
 # --- Configuration ---
-LOCS_FILE = "channel_62_pos.locs"
+LOCS_FILE = "utils/channel_62_pos.locs"
 BATCH_SIZE = 64
 EPOCHS = 120
 LEARNING_RATE = 0.0005
@@ -91,13 +93,12 @@ def load_de_data(data_folder, label_file):
         if subj_id not in subject_files: subject_files[subj_id] = []
         subject_files[subj_id].append(f)
 
-    # 1. Load the weights
-    # weights_file = "Params/subject_band_weights.json"
-    # if os.path.exists(weights_file):
-    #     with open(weights_file, 'r') as f:
-    #         band_weights = json.load(f)
-    #     print("Loaded subject-specific band weights.")
-    # else:
+    # --- Initialize Smart Preprocessor ---
+    channel_names = get_standard_channel_names()
+    preprocessor = SmartPreprocessor(channel_names)
+    print("Initialized Smart Preprocessor for Bad Channel Correction.")
+    # -------------------------------------
+
     band_weights = None
     print("Warning: Manual band weights DISABLED. Using raw data for Learnable Attention.")
         
@@ -118,7 +119,31 @@ def load_de_data(data_folder, label_file):
                 if key not in mat: continue
                 data = mat[key]
                 data = np.transpose(data, (1, 0, 2))
-                # data = data * weights # REMOVED: Model learns weights now
+
+                                # --- SMART PREPROCESSING (Interpolation) ---
+                # 1. Prepare for cleaning: (62, samples, 5)
+                data_for_cleaning = np.transpose(data, (1, 0, 2)) 
+                
+                # 2. Detect Bads (using mean across bands to get a single time-series proxy)
+                # We use the average of the 5 bands as the "signal" to check for variance/flatline
+                avg_signal = np.mean(data_for_cleaning, axis=2) # (62, samples)
+                bads = preprocessor.detect_bad_channels(avg_signal)
+                
+                if bads:
+                    # Interpolate each band separately (spatial interpolation works on 2D maps)
+                    cleaned_bands = []
+                    for b in range(5):
+                        band_data = data_for_cleaning[:, :, b] # (62, samples)
+                        cleaned_band = preprocessor.interpolate_bads(band_data, bads)
+                        cleaned_bands.append(cleaned_band)
+                    
+                    # Stack back: (62, samples, 5)
+                    data_for_cleaning = np.stack(cleaned_bands, axis=2)
+                    
+                    # Transpose back to (samples, 62, 5) for storage
+                    data = np.transpose(data_for_cleaning, (1, 0, 2))
+                # -------------------------------------------
+
                 num_samples = data.shape[0]
                 X_list.append(data)
                 y_list.append(np.full(num_samples, mapped_labels[trial_i - 1]))
@@ -144,37 +169,24 @@ def load_de_data(data_folder, label_file):
     # Assuming max session ID < 1000, which is safe here
     group_ids = subjects * 1000 + sessions
     unique_groups, group_indices = np.unique(group_ids, return_inverse=True)
-    n_groups = len(unique_groups)
     
-    # Initialize arrays for stats
-    # X shape: (N, 62, 5) -> Stats shape: (n_groups, 62, 5)
-    group_sums = np.zeros((n_groups, *X.shape[1:]), dtype=X.dtype)
-    group_sq_sums = np.zeros((n_groups, *X.shape[1:]), dtype=X.dtype)
+    X_scaled = np.zeros_like(X)
     
-    # Compute sums and counts using np.add.at (unbuffered in-place add)
-    np.add.at(group_sums, group_indices, X)
-    
-    # Counts per group
-    group_counts = np.bincount(group_indices)
-    
-    # Compute means: (n_groups, 62, 5)
-    # Reshape counts to (n_groups, 1, 1) for broadcasting
-    group_means = group_sums / group_counts[:, None, None]
-    
-    # Broadcast means back to original sample shape
-    # shape: (N, 62, 5)
-    expanded_means = group_means[group_indices]
-    X_centered = X - expanded_means
-    
-    # Compute Stds
-    np.add.at(group_sq_sums, group_indices, X_centered ** 2)
-    group_stds = np.sqrt(group_sq_sums / group_counts[:, None, None])
-    group_stds[group_stds < 1e-6] = 1.0 # Prevent div by zero
-    
-    # Apply Normalization
-    expanded_stds = group_stds[group_indices]
-    X = X_centered / expanded_stds
-
+    for gid in unique_groups:
+        mask = (group_ids == gid)
+        X_group = X[mask] # (N, 62, 5)
+        
+        # Flatten to (N, Features) for scaling
+        # We scale each channel-band combination independently
+        N, C, B = X_group.shape
+        X_flat = X_group.reshape(N, -1)
+        
+        scaler = RobustScaler()
+        X_flat_scaled = scaler.fit_transform(X_flat)
+        
+        X_scaled[mask] = X_flat_scaled.reshape(N, C, B)
+        
+    X = X_scaled
     print(f"Total Samples: {X.shape[0]}")
     return X, y, sessions, subjects, trials
 
