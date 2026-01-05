@@ -163,7 +163,7 @@ class TrainingManager:
             print(f"Could not generate plot: {e}")
 
 # --- 3. The Master Loop (Restored & Updated) ---
-def train_model_with_interrupt(model, train_loader, test_loader, optimizer, criterion, scheduler, epochs, device, patience, results_dir, params_dir, errors_dir, base_edge_index, evaluate_fn, hyperparams=None, in_features=5):
+def train_model_with_interrupt(model, train_loader, test_loader, optimizer, criterion, scheduler, epochs, device, results_dir, params_dir, errors_dir, base_edge_index, evaluate_fn, hyperparams=None, in_features=5):
     """
     Orchestrates the full training process.
     - Calls train_epoch() for the logic.
@@ -210,14 +210,14 @@ def train_model_with_interrupt(model, train_loader, test_loader, optimizer, crit
             # 5. Scheduler & Early Stopping
             scheduler.step(val_loss)
             
-            if improved:
-                patience_counter = 0
-                print(f"  >>> New Best Model Saved! ({val_acc:.2f}%)")
-            else:
-                patience_counter += 1
-                if patience_counter >= patience:
-                    print("Early stopping triggered.")
-                    break
+            # if improved:
+            #     patience_counter = 0
+            #     print(f"  >>> New Best Model Saved! ({val_acc:.2f}%)")
+            # else:
+            #     patience_counter += 1
+            #     if patience_counter >= patience:
+            #         print("Early stopping triggered.")
+            #         break
                     
     except KeyboardInterrupt:
         manager.handle_interrupt()

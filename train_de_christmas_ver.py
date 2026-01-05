@@ -16,12 +16,12 @@ from Models.graph_construction import get_knn_adjacency_matrix
 from utils.training_utils import train_model_with_interrupt
 
 # --- Configuration ---
-LOCS_FILE = "channel_62_pos.locs"
+LOCS_FILE = "utils/channel_62_pos.locs"
 BATCH_SIZE = 64
 EPOCHS = 120
 LEARNING_RATE = 0.0005
 WEIGHT_DECAY = 1e-3 # Stronger regularization
-PATIENCE = 30
+# PATIENCE = 30
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 CONFIG_FILE = "run_config.json"
 
@@ -55,7 +55,7 @@ def get_args():
                         help="Data splitting strategy (only for sub_dep mode)")
     parser.add_argument('--window_size', type=str, default='1s', choices=['1s', '4s'],
                         help="Feature window size: '1s' or '4s'")
-    parser.add_argument('--model_type', type=str, default = 'DGCNN', choices=['GCN', 'DGCNN'],
+    parser.add_argument('--model_type', type=str, default = 'GCN', choices=['GCN', 'DGCNN'],
                         help="Type of GCN model to use")
     parser.add_argument('--test_subject', type=int, default=1, 
                         help="ID of the subject to leave out for testing (only for sub_indep mode)")
@@ -379,8 +379,8 @@ def main():
     # The model ignores Negative (Class 0). We give it a higher weight.
     # Class 0 (Neg), Class 1 (Neu), Class 2 (Pos)
     # We double the penalty for getting Negative wrong.
-    class_weights = torch.tensor([1.0, 1.0, 1.0]).to(DEVICE)
-    criterion = nn.CrossEntropyLoss(weight=class_weights)
+    class_weights = torch.tensor([1.2, 0.9, 1.0]).to(DEVICE)
+    criterion = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=0.1)
 
     # Note: In sub_indep mode, 'test_loader' passed here is actually the Validation Loader
     train_model_with_interrupt(
@@ -392,7 +392,7 @@ def main():
         scheduler=scheduler,
         epochs=args.epochs,
         device=DEVICE,
-        patience=PATIENCE,
+        # patience=PATIENCE,
         results_dir=results_dir,
         params_dir=params_dir,
         errors_dir=errors_dir,

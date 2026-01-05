@@ -282,7 +282,7 @@ def main():
     parser.add_argument('--run_id', type=str, required=True, 
                         help="Attempt ID (int) OR Folder Name (str) for Diagnostic runs")
     parser.add_argument('--window_size', type=str, default='1s', choices=['1s', '4s'])
-    parser.add_argument('--model_type', type=str, default='DGCNN', choices=['GCN', 'DGCNN'], 
+    parser.add_argument('--model_type', type=str, default='GCN', choices=['GCN', 'DGCNN'], 
                         help="Model type used for training (GCN or DGCNN)")
     parser.add_argument('--mode', type=str, default='sub_dep', choices=['sub_dep', 'sub_indep', 'diagnostic'],
                         help="Training mode: 'sub_dep', 'sub_indep', or 'diagnostic'")
@@ -311,7 +311,7 @@ def main():
     else:
         # Standard Logic
         model_name = f"{args.model_type}_DE_{args.window_size}"
-        base_results_dir = os.path.join("Errors", model_name)
+        base_results_dir = os.path.join("Results", model_name)
         
         # Search for Attempt_{run_id}
         run_prefix = f"Attempt_{args.run_id}"
