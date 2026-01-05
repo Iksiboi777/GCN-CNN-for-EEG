@@ -14,22 +14,16 @@ from Models.var_B import GCN_DE_Model
 from Models.var_C import DGCNN_Model
 from Models.graph_construction import get_knn_adjacency_matrix
 from utils.training_utils import train_model_with_interrupt
-from utils.feature_engineering import SmartPreprocessor, get_standard_channel_names
-# from sklearn.preprocessing import RobustScaler # REMOVED to match Attempt 18
 
 # --- Configuration ---
-LOCS_FILE = "utils/channel_62_pos.locs"
+LOCS_FILE = "channel_62_pos.locs"
 BATCH_SIZE = 64
 EPOCHS = 120
 LEARNING_RATE = 0.0005
-WEIGHT_DECAY = 1e-3 
+WEIGHT_DECAY = 1e-3 # Stronger regularization
 PATIENCE = 30
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 CONFIG_FILE = "run_config.json"
-
-# --- STRATEGY CONFIGURATION ---
-HARD_SUBJECTS = [2, 7, 12, 13] # Subjects with systemic artifacts/sinkholes
-ROLLING_VAR_WINDOW = 3         # Window size for generating variance features
 
 def get_next_run_id(window_size):
     """Reads and increments the run counter from run_config.json for the specific window size"""
@@ -61,29 +55,13 @@ def get_args():
                         help="Data splitting strategy (only for sub_dep mode)")
     parser.add_argument('--window_size', type=str, default='1s', choices=['1s', '4s'],
                         help="Feature window size: '1s' or '4s'")
-    parser.add_argument('--model_type', type=str, default = 'GCN', choices=['GCN', 'DGCNN'],
+    parser.add_argument('--model_type', type=str, default = 'DGCNN', choices=['GCN', 'DGCNN'],
                         help="Type of GCN model to use")
     parser.add_argument('--test_subject', type=int, default=1, 
                         help="ID of the subject to leave out for testing (only for sub_indep mode)")
     parser.add_argument('--epochs', type=int, default=EPOCHS, help="Number of training epochs")
     parser.add_argument('--batch_size', type=int, default=BATCH_SIZE, help="Batch size")
     return parser.parse_args()
-
-def compute_rolling_variance(data, window_size=3):
-    """
-    Computes rolling variance along the time axis (axis 1).
-    Input: (62, samples, 5)
-    Output: (62, samples, 5)
-    """
-    pad_width = window_size // 2
-    padded = np.pad(data, ((0,0), (pad_width, pad_width), (0,0)), mode='edge')
-    
-    vars_list = []
-    for i in range(data.shape[1]):
-        slice_data = padded[:, i : i + window_size, :]
-        vars_list.append(np.var(slice_data, axis=1))
-        
-    return np.stack(vars_list, axis=1)
 
 def load_de_data(data_folder, label_file):
     print(f"Loading DE features from {data_folder}...")
@@ -113,16 +91,22 @@ def load_de_data(data_folder, label_file):
         if subj_id not in subject_files: subject_files[subj_id] = []
         subject_files[subj_id].append(f)
 
-    # --- Initialize Smart Preprocessor ---
-    channel_names = get_standard_channel_names()
-    # preprocessor = SmartPreprocessor(channel_names) # DISABLED for Attempt 18 reproduction
-    # print("Initialized Smart Preprocessor for Bad Channel Correction.")
-    # -------------------------------------
-
+    # 1. Load the weights
+    # weights_file = "Params/subject_band_weights.json"
+    # if os.path.exists(weights_file):
+    #     with open(weights_file, 'r') as f:
+    #         band_weights = json.load(f)
+    #     print("Loaded subject-specific band weights.")
+    # else:
     band_weights = None
-    print("Warning: Manual band weights DISABLED. Using raw data.")
+    print("Warning: Manual band weights DISABLED. Using raw data for Learnable Attention.")
         
     for subj_id in sorted(subject_files.keys()):
+        # if band_weights and str(subj_id) in band_weights:
+        #     weights = np.array(band_weights[str(subj_id)]) # (5,)
+        # else:
+        # weights = np.ones(5) # No weighting - REMOVED
+
         s_files = sorted(subject_files[subj_id], key=lambda x: x.split('_')[1])
         for sess_idx, fname in enumerate(s_files):
             session_id = sess_idx + 1
@@ -133,61 +117,15 @@ def load_de_data(data_folder, label_file):
                 key = f"de_LDS{trial_i}"
                 if key not in mat: continue
                 data = mat[key]
-                
-                # --- ROBUST SHAPE CORRECTION ---
-                # Target: (62, samples, 5)
-                # We identify dimensions by size: 62=Channels, 5=Bands
-                shape = data.shape
-                if shape[0] == 62:
-                    if shape[2] == 5:
-                        pass # Already (62, samples, 5)
-                    elif shape[1] == 5:
-                        data = np.transpose(data, (0, 2, 1)) # (62, 5, samples) -> (62, samples, 5)
-                elif shape[1] == 62:
-                    if shape[2] == 5:
-                        data = np.transpose(data, (1, 0, 2)) # (samples, 62, 5) -> (62, samples, 5)
-                    elif shape[0] == 5:
-                        data = np.transpose(data, (1, 2, 0)) # (5, 62, samples) -> (62, samples, 5)
-                elif shape[2] == 62:
-                    if shape[1] == 5:
-                        data = np.transpose(data, (2, 0, 1)) # (samples, 5, 62) -> (62, samples, 5)
-                    elif shape[0] == 5:
-                        data = np.transpose(data, (2, 1, 0)) # (5, samples, 62) -> (62, samples, 5)
-                # -------------------------------
-
-                # --- ATTEMPT 18 LOGIC: MANUAL CF2 FIX ONLY ---
-                # We blindly apply the fix to CF2 because we know it is often broken.
-                if 'CF2' in channel_names:
-                    cf2_idx = channel_names.index('CF2')
-                    # Check if neighbors exist in the dataset
-                    n1, n2, n3 = 'FC2', 'C2', 'CP2'
-                    if n1 in channel_names and n2 in channel_names and n3 in channel_names:
-                        idx1 = channel_names.index(n1)
-                        idx2 = channel_names.index(n2)
-                        idx3 = channel_names.index(n3)
-                        
-                        # Apply Triangulation Average
-                        data[cf2_idx, :, :] = (data[idx1, :, :] + data[idx2, :, :] + data[idx3, :, :]) / 3
-                # -----------------------------------------------------------
-
-                # --- RESTORED: Variance Calculation ---
-                # Compute rolling variance (Strategy V2)
-                data_var = compute_rolling_variance(data, window_size=ROLLING_VAR_WINDOW)
-                
-                # Stack: (62, samples, 5) + (62, samples, 5) -> (62, samples, 10)
-                data_combined = np.concatenate([data, data_var], axis=2)
-
-                # Transpose to (samples, 62, 10) for storage/model input
-                data_combined = np.transpose(data_combined, (1, 0, 2))
-
-                num_samples = data_combined.shape[0]
-                X_list.append(data_combined)
+                data = np.transpose(data, (1, 0, 2))
+                # data = data * weights # REMOVED: Model learns weights now
+                num_samples = data.shape[0]
+                X_list.append(data)
                 y_list.append(np.full(num_samples, mapped_labels[trial_i - 1]))
                 session_list.append(np.full(num_samples, session_id))
                 subject_list.append(np.full(num_samples, subj_id))
                 unique_trial_id = subj_id * 1000 + session_id * 100 + trial_i
                 trial_list.append(np.full(num_samples, unique_trial_id))
-
 
     if not X_list:
         print("Error: No data loaded.")
@@ -199,12 +137,13 @@ def load_de_data(data_folder, label_file):
     subjects = np.concatenate(subject_list, axis=0)
     trials = np.concatenate(trial_list, axis=0)
     
-    # --- ATTEMPT 18 REPRODUCTION: MANUAL Z-SCORE NORMALIZATION ---
-    print("Applying Manual Subject-Specific & Session-Specific Z-Score Normalization...")
+    # --- Subject-Specific & Session-Specific Normalization (Vectorized) ---
+    print("Applying Subject-Specific & Session-Specific Normalization...")
     
+    # Create unique identifiers for each subject-session pair
+    # Assuming max session ID < 1000, which is safe here
     group_ids = subjects * 1000 + sessions
     unique_groups, group_indices = np.unique(group_ids, return_inverse=True)
-    
     n_groups = len(unique_groups)
     
     # Initialize arrays for stats
@@ -235,10 +174,11 @@ def load_de_data(data_folder, label_file):
     # Apply Normalization
     expanded_stds = group_stds[group_indices]
     X = X_centered / expanded_stds
+
     print(f"Total Samples: {X.shape[0]}")
     return X, y, sessions, subjects, trials
 
-
+# ...existing code...
 def evaluate(model, loader, base_edge_index, criterion, device, return_preds=False, return_embeddings=False):
     model.eval()
     correct = 0
@@ -257,8 +197,7 @@ def evaluate(model, loader, base_edge_index, criterion, device, return_preds=Fal
             offsets = (torch.arange(curr_batch_size, device=device) * 62).view(-1, 1, 1)
             edge_index = (base_edge_index.unsqueeze(0) + offsets).permute(1, 0, 2).reshape(2, -1)
             
-            # Flatten features: (Batch, 62, 10) -> (Batch*62, 10)
-            batch_X_flat = batch_X.view(-1, 10)
+            batch_X_flat = batch_X.view(-1, 5)
 
             if return_embeddings:
                 outputs, embeddings = model(batch_X_flat, edge_index, batch_idx, return_embedding=True)
@@ -297,19 +236,22 @@ def main():
         data_folder = "Data/ExtractedFeatures_4s"
     label_file = os.path.join(data_folder, "label.mat")
     
+    # --- NEW FOLDER LOGIC ---
     run_id = get_next_run_id(args.window_size)
     
     model_name = f"{args.model_type}_DE_{args.window_size}"
 
     if args.mode == 'sub_dep':
-        run_name = f"Attempt_{run_id}_{args.split_strategy}_Phase2"
+        run_name = f"Attempt_{run_id}_{args.split_strategy}"
     else:
-        run_name = f"Attempt_{run_id}_LOSO_sub{args.test_subject}_Phase2"
+        # For LOSO, include the test subject in the run name
+        run_name = f"Attempt_{run_id}_LOSO_sub{args.test_subject}"
     
     results_dir = os.path.join("Results", model_name, run_name)
     params_dir = os.path.join("Params", model_name, run_name)
     errors_dir = os.path.join("Errors", model_name, run_name)
 
+    # Ensure these directories exist
     os.makedirs(results_dir, exist_ok=True)
     os.makedirs(params_dir, exist_ok=True)
     os.makedirs(errors_dir, exist_ok=True)
@@ -338,25 +280,43 @@ def main():
             
         elif args.split_strategy == 'random':
             print("  -> Strategy: Random Split (80% Train, 20% Test, shuffled across sessions)")
+            # Random shuffle of all data
+            # We want to select 3 trials (1 per class) from EACH session of EACH subject for testing.
+            # This ensures we mix sessions but DO NOT mix windows from the same trial.
+            
             test_indices_list = []
+            
+            # Get unique subject-session pairs
             unique_sub_sess = np.unique(np.stack((subjects, sessions), axis=1), axis=0)
             
             for sub, sess in unique_sub_sess:
+                # Find all trials for this subject & session
                 mask = (subjects == sub) & (sessions == sess)
+                # Get unique trials in this session
                 sess_trials = np.unique(trials[mask])
+                
+                # Group trials by label
                 trials_by_label = {0: [], 1: [], 2: []}
                 for t_id in sess_trials:
+                    # Get label for this trial (take first sample's label)
                     t_label = y[trials == t_id][0]
                     trials_by_label[t_label].append(t_id)
                 
+                # Select 1 trial from each label for TEST
                 for label in [0, 1, 2]:
                     available_trials = trials_by_label[label]
                     if len(available_trials) > 0:
+                        # Deterministic selection for reproducibility (or random)
+                        # Let's pick the LAST trial of each class for testing to be consistent
                         test_trial = available_trials[-1] 
+                        
+                        # Find indices of this trial
                         t_indices = np.where(trials == test_trial)[0]
                         test_indices_list.append(t_indices)
             
             test_indices = np.concatenate(test_indices_list)
+            
+            # Create boolean mask
             test_mask = np.zeros(len(y), dtype=bool)
             test_mask[test_indices] = True
             train_mask = ~test_mask
@@ -371,9 +331,17 @@ def main():
 
     elif args.mode == 'sub_indep':
         print(f"  -> Strategy: Leave-One-Subject-Out (Test Subject: {args.test_subject})")
+        
+        # 1. Identify Test Subject
         test_mask = (subjects == args.test_subject)
+        
+        # 2. Identify Validation Subject (Pick one from the remaining subjects)
+        # We pick the subject with ID = (test_subject % 15) + 1
+        # e.g., if Test=1, Val=2. If Test=15, Val=1.
         val_subject_id = (args.test_subject % 15) + 1
         val_mask = (subjects == val_subject_id)
+        
+        # 3. Identify Train Subjects (Everyone else)
         train_mask = ~(test_mask | val_mask)
         
         print(f"     Train Subjects: All except {args.test_subject} and {val_subject_id}")
@@ -384,35 +352,37 @@ def main():
         X_val, y_val = X_tensor[val_mask], y_tensor[val_mask]
         X_test, y_test = X_tensor[test_mask], y_tensor[test_mask]
         
+        # Create Loaders
         train_loader = DataLoader(TensorDataset(X_train, y_train), batch_size=args.batch_size, shuffle=True)
+        # We use Val loader for Early Stopping
         test_loader = DataLoader(TensorDataset(X_val, y_val), batch_size=args.batch_size, shuffle=False)
+        # We keep the real Test loader for final evaluation
         final_test_loader = DataLoader(TensorDataset(X_test, y_test), batch_size=args.batch_size, shuffle=False)
     
     print("Constructing Graph...")
     base_edge_index = get_knn_adjacency_matrix(LOCS_FILE, k=5).to(DEVICE)
     
-    # --- UPDATE: Input Features = 10 (5 Mean + 5 Variance) ---
-    IN_FEATURES = 10
-    
     if args.model_type == 'GCN':
         print("Initializing Static GCN Model...")
-        model = GCN_DE_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=64, 
+        # SIMPLIFIED MODEL: 2 Layers, 64 Hidden, 0.5 Dropout
+        model = GCN_DE_Model(num_nodes=62, in_features=5, hidden_dim=64, 
                              num_classes=3, dropout_rate=0.5, num_layers=3).to(DEVICE)
     elif args.model_type == 'DGCNN':
         print("Initializing Dynamic DGCNN Model (Learnable Graph)...")
-        model = DGCNN_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=64, 
+        model = DGCNN_Model(num_nodes=62, in_features=5, hidden_dim=64, 
                             num_classes=3, dropout_rate=0.5).to(DEVICE)
     
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=10)
     
-    # --- STRATEGY: Class Weights ---
-    # Double penalty for Negative (Class 0) to fix Recall
+    # --- CHANGE 2: Add Class Weights to fix Negative Recall ---
+    # The model ignores Negative (Class 0). We give it a higher weight.
+    # Class 0 (Neg), Class 1 (Neu), Class 2 (Pos)
+    # We double the penalty for getting Negative wrong.
     class_weights = torch.tensor([1.0, 1.0, 1.0]).to(DEVICE)
     criterion = nn.CrossEntropyLoss(weight=class_weights)
 
-    # --- CLEAN CALL TO MASTER TRAINING FUNCTION ---
-    # This handles the loop, saving, interrupts, and the dimension fix internally.
+    # Note: In sub_indep mode, 'test_loader' passed here is actually the Validation Loader
     train_model_with_interrupt(
         model=model,
         train_loader=train_loader,
@@ -427,13 +397,12 @@ def main():
         params_dir=params_dir,
         errors_dir=errors_dir,
         base_edge_index=base_edge_index,
-        evaluate_fn=evaluate,
-        hyperparams=args,
-        in_features=IN_FEATURES  # Passing the critical 10 features argument
-    )
+        evaluate_fn=evaluate)
 
+    # --- Final Test for LOSO ---
     if args.mode == 'sub_indep':
         print("\n>>> Running Final Test on Held-out Subject...")
+        # Load best model
         best_model_path = os.path.join(params_dir, "best_model_checkpoint.pth")
         if os.path.exists(best_model_path):
             model.load_state_dict(torch.load(best_model_path))
@@ -443,6 +412,7 @@ def main():
         print(f"FINAL TEST RESULTS (Subject {args.test_subject}):")
         print(f"Loss: {test_loss:.4f} | Accuracy: {test_acc:.2f}%")
         
+        # Save specific test results
         np.save(os.path.join(results_dir, f"final_test_preds_sub{args.test_subject}.npy"), {'preds': preds, 'true': true_labels})
 
 if __name__ == "__main__":

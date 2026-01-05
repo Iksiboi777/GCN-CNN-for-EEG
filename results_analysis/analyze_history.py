@@ -201,6 +201,12 @@
 
 
 import numpy as np
+import matplotlib
+try:
+    matplotlib.use('TkAgg')
+except Exception as e:
+    print(f"Warning: Could not set TkAgg backend: {e}")
+
 import matplotlib.pyplot as plt
 import seaborn as sns
 import os
@@ -209,7 +215,8 @@ from sklearn.metrics import confusion_matrix
 from sklearn.manifold import TSNE
 import scipy.io
 
-def load_metadata(data_folder, label_file):
+
+def load_metadata(data_folder, label_file, is_binary=False):
     """Reconstructs Subject and Session IDs for the test set."""
     print(f"Loading metadata from {data_folder}...")
     try:
@@ -218,10 +225,18 @@ def load_metadata(data_folder, label_file):
         print("Label file not found.")
         return None, None
 
-    # Reconstruct metadata logic (same as train_de.py)
+    # Load Labels to filter for Binary Mode
+    trial_labels = label_mat['label'][0]
+    label_map = {-1: 0, 0: 1, 1: 2}
+    mapped_labels = np.array([label_map[l] for l in trial_labels])
+    
+    # If binary, we need the mask to filter metadata later
+    keep_mask = (mapped_labels != 2) if is_binary else np.ones(len(mapped_labels), dtype=bool)
+    
+    # Reconstruct metadata logic
     session_list = []
     subject_list = []
-    
+
     files = [f for f in os.listdir(data_folder) if f.endswith('.mat') and f != 'label.mat']
     subject_files = {}
     for f in files:
@@ -238,11 +253,23 @@ def load_metadata(data_folder, label_file):
             file_path = os.path.join(data_folder, fname)
             try: mat = scipy.io.loadmat(file_path)
             except: continue
+            
             for trial_i in range(1, 16):
+                trial_idx = trial_i - 1
+                
+                # Apply Binary Filter if needed
+                if is_binary and not keep_mask[trial_idx]:
+                    continue
+
                 key = f"de_LDS{trial_i}"
                 if key not in mat: continue
                 data = mat[key]
-                num_samples = data.shape[1]
+                
+                # Fix for transposed data in binary script vs raw data here
+                # The binary script transposes, but here we load raw. 
+                # Raw is (62, samples, 5). We need samples.
+                num_samples = data.shape[1] 
+                
                 session_list.append(np.full(num_samples, session_id))
                 subject_list.append(np.full(num_samples, subj_id))
 
@@ -252,46 +279,53 @@ def load_metadata(data_folder, label_file):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--run_id', type=int, required=True, help="Attempt ID")
+    parser.add_argument('--run_id', type=str, required=True, 
+                        help="Attempt ID (int) OR Folder Name (str) for Diagnostic runs")
     parser.add_argument('--window_size', type=str, default='1s', choices=['1s', '4s'])
     parser.add_argument('--model_type', type=str, default='DGCNN', choices=['GCN', 'DGCNN'], 
                         help="Model type used for training (GCN or DGCNN)")
-    parser.add_argument('--mode', type=str, default='sub_dep', choices=['sub_dep', 'sub_indep'],
-                        help="Training mode: 'sub_dep' or 'sub_indep'")
+    parser.add_argument('--mode', type=str, default='sub_dep', choices=['sub_dep', 'sub_indep', 'diagnostic'],
+                        help="Training mode: 'sub_dep', 'sub_indep', or 'diagnostic'")
     args = parser.parse_args()
 
-    # Paths - Updated to use model_type and mode
-    model_name = f"{args.model_type}_DE_{args.window_size}"
-    
-    # Look in Results/{MODE}/{MODEL_NAME}
-    base_results_dir = os.path.join("Results", args.mode, model_name)
-    
-    # Search for the directory starting with Attempt_{run_id}
-    run_prefix = f"Attempt_{args.run_id}"
-    found_dirs = []
-    if os.path.exists(base_results_dir):
-        found_dirs = [d for d in os.listdir(base_results_dir) 
-                      if d.startswith(run_prefix) and os.path.isdir(os.path.join(base_results_dir, d))]
-    
-    if not found_dirs:
-        print(f"Error: No run directory found starting with '{run_prefix}' in {base_results_dir}")
-        # Fallback check for old flat structure (just in case)
-        old_base = os.path.join("Results", model_name)
-        if os.path.exists(old_base):
-             print(f"Checking old structure: {old_base}")
-             found_dirs = [d for d in os.listdir(old_base) if d.startswith(run_prefix)]
-             if found_dirs:
-                 print(f"Found in old structure! Please move folders to {base_results_dir} for consistency.")
-                 base_results_dir = old_base
+    # --- PATH RESOLUTION LOGIC ---
+    if args.mode == 'diagnostic':
+        # Diagnostic runs are in Results/Diagnostic/{RUN_NAME}
+        # User can pass the full folder name as run_id, e.g., "BinaryDiag_GammaTrue_SessionHoldout"
+        base_results_dir = os.path.join("Results", "Diagnostic")
+        run_name = args.run_id # Treat run_id as the folder name directly
+        
+        # Check if user passed just an ID or full name
+        if not os.path.exists(os.path.join(base_results_dir, run_name)):
+             # Try finding it if they just passed "BinaryDiag" or similar
+             candidates = [d for d in os.listdir(base_results_dir) if args.run_id in d]
+             if candidates:
+                 run_name = candidates[0]
+                 print(f"Found matching diagnostic run: {run_name}")
              else:
+                 print(f"Error: Could not find diagnostic run '{args.run_id}' in {base_results_dir}")
                  return
         else:
+            print(f"Error: Directory {base_results_dir} does not exist.")
             return
+    else:
+        # Standard Logic
+        model_name = f"{args.model_type}_DE_{args.window_size}"
+        base_results_dir = os.path.join("Errors", model_name)
         
-    # Use the first match
-    run_name = found_dirs[0]
+        # Search for Attempt_{run_id}
+        run_prefix = f"Attempt_{args.run_id}"
+        found_dirs = []
+        if os.path.exists(base_results_dir):
+            found_dirs = [d for d in os.listdir(base_results_dir) 
+                          if d.startswith(run_prefix) and os.path.isdir(os.path.join(base_results_dir, d))]
+        
+        if not found_dirs:
+            print(f"Error: No run directory found starting with '{run_prefix}' in {base_results_dir}")
+            return
+        run_name = found_dirs[0]
+
     print(f"Analyzing Run: {run_name}")
-    
     results_dir = os.path.join(base_results_dir, run_name)
     history_file = os.path.join(results_dir, "evolution_history.npy")
     
@@ -301,38 +335,39 @@ def main():
 
     print(f"Loading history from {history_file}...")
     data = np.load(history_file, allow_pickle=True).item()
-    preds_history = data['preds_history'] # List of arrays
-    embeddings_history = data['embeddings_history'] # Dict: epoch -> array
+    preds_history = data['preds_history'] 
+    embeddings_history = data['embeddings_history'] 
     y_true = data['true_labels']
-    
     y_true_arr = np.array(y_true)
-    print(f"y_true_arr shape: {y_true_arr.shape}")
+    
+    # Determine Classes
+    unique_classes = np.unique(y_true_arr)
+    is_binary = (len(unique_classes) == 2)
+    class_names = ['Neg', 'Neu'] if is_binary else ['Neg', 'Neu', 'Pos']
+    print(f"Detected {len(unique_classes)} classes. Mode: {'Binary' if is_binary else '3-Class'}")
 
-    # Load Metadata for Error Analysis
+    # Load Metadata
     data_folder = f"Data/ExtractedFeatures_{args.window_size}"
     label_file = os.path.join(data_folder, "label.mat")
-    sessions, subjects = load_metadata(data_folder, label_file)
+    
+    # Pass is_binary flag to filter metadata correctly
+    sessions, subjects = load_metadata(data_folder, label_file, is_binary=is_binary)
     
     # Filter metadata based on mode
     test_subjects = None
-    if args.mode == 'sub_dep':
+    if args.mode == 'sub_dep' or args.mode == 'diagnostic':
         # Filter for Test Set (Session 3)
         test_mask = (sessions == 3)
         test_subjects = subjects[test_mask]
     else:
-        # For sub_indep, infer test subject from run name
+        # sub_indep logic...
         try:
-            # Expected format: Attempt_X_LOSO_subY
             parts = run_name.split('_sub')
             if len(parts) > 1:
                 test_sub_id = int(parts[-1])
-                print(f"Inferred Test Subject ID: {test_sub_id}")
                 test_mask = (subjects == test_sub_id)
                 test_subjects = subjects[test_mask]
-            else:
-                print("Could not infer test subject from run name.")
-        except Exception as e:
-            print(f"Error parsing subject ID: {e}")
+        except: pass
 
     if test_subjects is not None:
         if len(test_subjects) != len(y_true):
@@ -350,11 +385,11 @@ def main():
     for i, epoch in enumerate(epochs_to_plot):
         cm = confusion_matrix(y_true, preds_history[epoch])
         sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', cbar=False, ax=axes[i],
-                    xticklabels=['Neg', 'Neu', 'Pos'], yticklabels=['Neg', 'Neu', 'Pos'])
+                    xticklabels=class_names, yticklabels=class_names)
         axes[i].set_title(f"Epoch {epoch+1}")
     plt.tight_layout()
     plt.savefig(os.path.join(results_dir, "cm_evolution.png"))
-    plt.show()
+    print("Saved cm_evolution.png")
 
     # --- 2. Error Heatmap (Subject vs Epoch) ---
     if test_subjects is not None:
@@ -370,13 +405,13 @@ def main():
                 sub_error_rate = np.mean(errors[sub_mask])
                 error_matrix[i, epoch_idx] = sub_error_rate
 
-        plt.figure(figsize=(15, max(4, len(unique_subs)*0.5))) # Adjust height based on num subjects
+        plt.figure(figsize=(15, max(4, len(unique_subs)*0.5)))
         sns.heatmap(error_matrix, cmap='Reds', xticklabels=10, yticklabels=unique_subs)
         plt.title("Error Rate per Subject over Epochs")
         plt.xlabel("Epoch")
         plt.ylabel("Subject ID")
         plt.savefig(os.path.join(results_dir, "error_heatmap.png"))
-        plt.show()
+        print("Saved error_heatmap.png")
 
     # --- 3. t-SNE Clustering Evolution ---
     print("Generating t-SNE Clustering...")
@@ -384,14 +419,12 @@ def main():
     if not avail_epochs:
         print("No embeddings found in history.")
     else:
-        # Pick first, middle, last
         selected_epochs = [avail_epochs[0], avail_epochs[len(avail_epochs)//2], avail_epochs[-1]]
         selected_epochs = sorted(list(set(selected_epochs)))
         
         fig, axes = plt.subplots(1, len(selected_epochs), figsize=(20, 6))
         if len(selected_epochs) == 1: axes = [axes] 
         
-        # Subsample for t-SNE speed (max 2000 points)
         indices = np.random.choice(len(y_true), min(2000, len(y_true)), replace=False)
         
         for i, epoch in enumerate(selected_epochs):
@@ -404,10 +437,10 @@ def main():
             scatter = axes[i].scatter(emb_2d[:, 0], emb_2d[:, 1], c=labels, cmap='viridis', alpha=0.6, s=10)
             axes[i].set_title(f"Epoch {epoch+1} Embeddings")
             
-        plt.legend(handles=scatter.legend_elements()[0], labels=['Neg', 'Neu', 'Pos'])
+        plt.legend(handles=scatter.legend_elements()[0], labels=class_names)
         plt.tight_layout()
         plt.savefig(os.path.join(results_dir, "tsne_evolution.png"))
-        plt.show()
+        # plt.show()
 
 if __name__ == "__main__":
     main()
