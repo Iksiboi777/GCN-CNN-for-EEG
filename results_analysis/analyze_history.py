@@ -376,7 +376,7 @@ def main():
 
     # --- 1. Confusion Matrix Evolution ---
     print("Generating Confusion Matrix Evolution...")
-    epochs_to_plot = [0, 10, 30, 60, len(preds_history)-1]
+    epochs_to_plot = [0, 2, 10, 15, 21, 30, 60, len(preds_history)-1]
     epochs_to_plot = [e for e in epochs_to_plot if e < len(preds_history)]
     
     fig, axes = plt.subplots(1, len(epochs_to_plot), figsize=(20, 4))

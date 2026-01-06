@@ -1,0 +1,73 @@
+# Dynamic Learning Analysis: Attempts 41-46
+
+This document tracks the evolution of the model architecture from static GCNs to dynamic, attention-based systems. The primary goal during this phase was to solve inter-subject variability (specifically Subject 12's "black hole" and Subject 10's noise) without manual feature engineering.
+
+---
+
+## **Phase 1: Feature Expansion & Graph Basics**
+
+### **Attempt 41: The Baseline (High Variance)**
+*   **Architecture:** Standard GCN (3 Layers).
+*   **Features:** Mean DE only (5 bands).
+*   **Observation:** The model struggled to converge on emotional extremes. Neutral was over-predicted.
+*   **Verdict:** Mean DE alone is insufficient for subjects where amplitude does not correlate with emotion (Subject 12).
+
+### **Attempt 42 & 43: Incorporating Variance**
+*   **Adjustment:** Added **Channel Variance** as 5 additional input features (Total Input: 10).
+*   **Hypothesis:** If the mean amplitude is flat (Subject 12), the fluctuation (variance) might carry the signal.
+*   **Outcome:** 
+    *   Immediate improvement in distinguishing "active" emotional states from Neutral.
+    *   **Problem:** Variance introduced massive instability. Artifacts (movements/blinks) create huge variance spikes that the GCN treats as "strong emotion."
+
+---
+
+## **Phase 2: The "CF2" Divergence**
+
+### **Attempt 44: The Structural Fix (Targeting Subject 10)**
+*   **Adjustment:** Manually set the adjacency weights for node `CF2` to 0.
+*   **Why:** Subject 10 had a broken sensor at CF2 that was destroying neighbor updates.
+*   **Outcome:** 
+    *   Subject 10 improved massiveley.
+    *   **Subject 12 deteriorated.** Hard-coding the graph structure prevented the model from using potentially valid signals in that region for other subjects.
+    *   **Lesson:** "Hard" structural fixes hurt generalization. We need "Soft" learnable fixes.
+
+---
+
+## **Phase 3: Dynamic Architectures**
+
+### **Attempt 45: Squeeze-and-Excitation (SE-Block)**
+*   **Concept:** "Dynamic Feature Attention."
+*   **Architecture:** Added an SE-Block before the GCN.
+    *   *Squeeze:* Calculate Global Mean of each band.
+    *   *Excitation:* Learn which bands (Gamma vs Delta) matter for *this specific 1-second clip*.
+*   **Hypothesis:** The model should auto-detect that Subject 12 relies on Beta/Gamma variance and ignore the noisy Delta band.
+*   **Result (The "Loud Noise" Failure):** 
+    *   The classification bias remained.
+    *   **Diagnosis:** The Global Mean Pooling in the SE-Block was corrupted by single-channel artifacts (Cz/CPz spikes). The "noise" was so loud that the SE-Block couldn't hear the "signal," leading it to boost the wrong features.
+
+### **Attempt 46: Adaptive Inputs & Sparsity (The "Silencer")**
+*   **Concept:** "Learnable Sensor Calibration."
+*   **Architecture:** `AdaptiveGraphInputLayer` (Learnable $\gamma$ and $\beta$ per node).
+*   **Optimization:** Added **Strong L2/L1 Regularization** specifically to the $\gamma$ parameters.
+*   **Why:** To force the model to drive the weights of noisy sensors (Cz, CPz) to zero automatically.
+*   **Result:** 
+    *   **Pros:** Better separation of Negative class in later epochs.
+    *   **Cons:** Confusion Matrix instability (drastic shifts at epoch 31).
+    *   **Critical Flaw:** The presence of `LayerNorm` after the Adaptive Layer essentially "undid" the silencing. If $\gamma$ reduced a noise spike to 0.01, Normalization expanded it back to 1.0.
+
+---
+
+## **Summary of Trajectory**
+
+| Attempt | Strategy | Key Insight | Status |
+| :--- | :--- | :--- | :--- |
+| **41** | Baseline GCN | Mean DE is statistically insufficient for Subj 12. | **Abandoned** |
+| **43** | Var + Mean | Variance is the "Rosetta Stone" but is noisy. | **Foundation** |
+| **44** | Manual Graph Edit | Hard rules fix one subject but break others. | **Rejected** |
+| **45** | SE-Block | Global Averaging is vulnerable to local outliers. | **Refined** |
+| **46** | Adaptive Inputs | Normalization fights against Learned Sparsity. | **Current** |
+
+## **Next Proposed Step (Attempt 47)**
+**"The Dictator Mechanism (Global Attention)"**
+1.  **Remove LayerNorm:** Allow the Adaptive Layer to actually kill signals.
+2.  **Replace Mean Pooling:** Use `GlobalAttention` pooling. Instead of averaging all 62 nodes (democracy), let the model learn a gating function to ignore the noisy nodes completely (dictatorship) when calculating the graph embedding.

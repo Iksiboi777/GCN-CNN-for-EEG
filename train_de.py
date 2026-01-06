@@ -24,6 +24,8 @@ EPOCHS = 120
 LEARNING_RATE = 0.0005
 WEIGHT_DECAY = 1e-3 
 PATIENCE = 30
+# --- NEW: Sparsity Penalty for Adaptive Layer ---
+L1_LAMBDA = 1e-4  # Force gamma parameters towards zero
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 CONFIG_FILE = "run_config.json"
 
@@ -157,17 +159,17 @@ def load_de_data(data_folder, label_file):
 
                 # --- ATTEMPT 18 LOGIC: MANUAL CF2 FIX ONLY ---
                 # We blindly apply the fix to CF2 because we know it is often broken.
-                if 'CF2' in channel_names:
-                    cf2_idx = channel_names.index('CF2')
-                    # Check if neighbors exist in the dataset
-                    n1, n2, n3 = 'FC2', 'C2', 'CP2'
-                    if n1 in channel_names and n2 in channel_names and n3 in channel_names:
-                        idx1 = channel_names.index(n1)
-                        idx2 = channel_names.index(n2)
-                        idx3 = channel_names.index(n3)
+                # if 'CF2' in channel_names:
+                #     cf2_idx = channel_names.index('CF2')
+                #     # Check if neighbors exist in the dataset
+                #     n1, n2, n3 = 'FC2', 'C2', 'CP2'
+                #     if n1 in channel_names and n2 in channel_names and n3 in channel_names:
+                #         idx1 = channel_names.index(n1)
+                #         idx2 = channel_names.index(n2)
+                #         idx3 = channel_names.index(n3)
                         
-                        # Apply Triangulation Average
-                        data[cf2_idx, :, :] = (data[idx1, :, :] + data[idx2, :, :] + data[idx3, :, :]) / 3
+                #         # Apply Triangulation Average
+                #         data[cf2_idx, :, :] = (data[idx1, :, :] + data[idx2, :, :] + data[idx3, :, :]) / 3
                 # -----------------------------------------------------------
 
                 # --- RESTORED: Variance Calculation ---
@@ -403,13 +405,29 @@ def main():
         model = DGCNN_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=64, 
                             num_classes=3, dropout_rate=0.5).to(DEVICE)
     
-    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
+    # --- UPDATED OPTIMIZER: STRONG REGULARIZATION FOR GAMMA ---
+    # We split parameters into "gamma" (needs strong regularization) and "rest".
+    
+    gamma_params = []
+    other_params = []
+    
+    for name, param in model.named_parameters():
+        if 'static_norm.gamma' in name:
+            gamma_params.append(param)
+        else:
+            other_params.append(param)
+            
+    optimizer = optim.Adam([
+        {'params': other_params, 'weight_decay': WEIGHT_DECAY}, # Normal L2
+        {'params': gamma_params, 'weight_decay': 1e-2}          # Strong L2 (force small weights)
+    ], lr=LEARNING_RATE)
+    
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=10)
     
     # --- STRATEGY: Class Weights ---
     # Double penalty for Negative (Class 0) to fix Recall
-    class_weights = torch.tensor([1.0, 1.0, 1.0]).to(DEVICE)
-    criterion = nn.CrossEntropyLoss(weight=class_weights)
+    class_weights = torch.tensor([1.2, 0.9, 1.0]).to(DEVICE)
+    criterion = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=0.1)
 
     # --- CLEAN CALL TO MASTER TRAINING FUNCTION ---
     # This handles the loop, saving, interrupts, and the dimension fix internally.
@@ -422,7 +440,7 @@ def main():
         scheduler=scheduler,
         epochs=args.epochs,
         device=DEVICE,
-        patience=PATIENCE,
+        # patience=PATIENCE,
         results_dir=results_dir,
         params_dir=params_dir,
         errors_dir=errors_dir,
