@@ -296,7 +296,7 @@ class GCN_DE_Model(nn.Module):
         self.fc = nn.Linear(hidden_dim, num_classes)
         self.dropout = nn.Dropout(dropout_rate)
 
-    def forward(self, x, edge_index, batch_index, return_embedding=False):
+    def forward(self, x, edge_index, batch_index, return_embedding=False, return_attention=False):
         # 1. Preprocessing
         x = self.static_norm(x)
         x = self.se_block(x, batch_index)
@@ -310,6 +310,19 @@ class GCN_DE_Model(nn.Module):
                 x = self.dropout(x)
         
         # 3. Aggregation (Replaced MeanPool with AttPool)
+
+        # --- NEW BLOCK: EXTRACT ATTENTION WEIGHTS ---
+        if return_attention:
+            # We manually pass x through the gating network associated with the final pool
+            # x shape: (TotalNodesInBatch, HiddenDim)
+            # gate_nn output: (TotalNodesInBatch, 1) -> The "Importance" score (0 to 1)
+            attention_logits = self.final_pool.gate_nn(x)
+            attention_weights = attention_logits.squeeze() # Shape: (TotalNodesInBatch)
+            
+            # Continue with normal pooling
+            embedding = self.final_pool(x, batch_index)
+            out = self.fc(embedding)
+            return out, attention_weights
         embedding = self.final_pool(x, batch_index)
         
         # 4. Classification

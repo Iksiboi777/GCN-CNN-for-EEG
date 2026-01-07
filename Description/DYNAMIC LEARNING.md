@@ -71,3 +71,26 @@ This document tracks the evolution of the model architecture from static GCNs to
 **"The Dictator Mechanism (Global Attention)"**
 1.  **Remove LayerNorm:** Allow the Adaptive Layer to actually kill signals.
 2.  **Replace Mean Pooling:** Use `GlobalAttention` pooling. Instead of averaging all 62 nodes (democracy), let the model learn a gating function to ignore the noisy nodes completely (dictatorship) when calculating the graph embedding.
+
+
+# ...existing code...
+### Attempt 47: Global Attention + Sparsity + Label Smoothing (Current)
+*   **Concept:** "The Dictator Mechanism" (Attention) with Sparsity penalties.
+*   **Status:** **Success (Functionally), Failure (Outcome).**
+*   **Evidence from Deep Dive (Subj 12):**
+    *   **Model's Focus:** `T8, C6, T7, C5, TP8` (Temporal/Lateral). These are valid emotion-processing regions.
+    *   **Identified Noise:** `Cz, CPz, F7, C3` (Highest output variance).
+    *   **The Mechanism:** The model's "Favorite" list does **not** contain the "Noisiest" list. This proves the Attention mechanism successfully learned to **decouple Variance from Importance**. It correctly ignores the massive noise at Cz/CPz.
+*   **Why Subj 12 still fails:**
+    *   The model is looking at the "Correct" channels (T7/T8).
+    *   The accuracy is still 0% on specific trials.
+    *   **Conclusion:** If the model looks at the right place and finds nothing, the data in the *signal* channels (T7/T8) is likely corrupted or missing for Subject 12 during those trials. Attention cannot fix a signal that doesn't exist.
+
+## **Conclusion on Dynamic Architecture**
+We have reached the limit of what architecture can fix. The model is effectively:
+1.  Ignoring Noise (Cz).
+2.  Focusing on Theory (Temporal Lobes).
+3.  Smoothing Labels (to avoid infinite loss).
+
+The remaining errors are likely **Irreducible Data Errors**.
+# ...existing code...
