@@ -57,20 +57,22 @@ This document tracks the evolution of the model architecture from static GCNs to
 
 ---
 
-## **Summary of Trajectory**
+## **Summary of Trajectory & Results**
 
-| Attempt | Strategy | Key Insight | Status |
-| :--- | :--- | :--- | :--- |
-| **41** | Baseline GCN | Mean DE is statistically insufficient for Subj 12. | **Abandoned** |
-| **43** | Var + Mean | Variance is the "Rosetta Stone" but is noisy. | **Foundation** |
-| **44** | Manual Graph Edit | Hard rules fix one subject but break others. | **Rejected** |
-| **45** | SE-Block | Global Averaging is vulnerable to local outliers. | **Refined** |
-| **46** | Adaptive Inputs | Normalization fights against Learned Sparsity. | **Current** |
+| Attempt | Architecture | Features | Avg Accuracy | Subj 10 (Noisy) | Subj 12 (Disengaged) | Verdict |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **41** | Baseline GCN | Mean DE (5) | ~76% | Poor (<65%) | Poor (<35%) | **Baseline.** Fails to capture signal quality or low-arousal states. |
+| **43** | **Variance GCN** | Mean + Var (10) | **~81%** | **Degraded** | **Improved** | Variance distinguishes "Sad" from "Neutral" but amplifies artifacts. |
+| **44** | Manual Graph | Mean + Var | ~80% | Improved | Degraded | Hard-coding filters helps one subject but hurts generalization. |
+| **45** | SE-Block | Mean + Var | ~79% | Failed | Poor | Global Mean Pooling was corrupted by high-amplitude noise spikes. |
+| **46** | Adaptive Inputs | Mean + Var | ~82% | Good | Unstable | LayerNorm negated the learned sparsity, preventing true noise suppression. |
+| **47** | **Global Attn** | Mean + Var | **~83%** | **Fixed (>80%)** | **Capped (~36%)** | **Final Model.** Successfully filters noise (Subj 10) but proves Subj 12 has no valid signal. |
 
-## **Next Proposed Step (Attempt 47)**
-**"The Dictator Mechanism (Global Attention)"**
-1.  **Remove LayerNorm:** Allow the Adaptive Layer to actually kill signals.
-2.  **Replace Mean Pooling:** Use `GlobalAttention` pooling. Instead of averaging all 62 nodes (democracy), let the model learn a gating function to ignore the noisy nodes completely (dictatorship) when calculating the graph embedding.
+## **Next Proposed Step (Attempt 48)**
+**"Forensic Validation"**
+1.  **Correlation Check:** Verify if the "Dead" subjects are actually dead.
+2.  **Finding:** Subject 12 is NOT dead. The sensors are active and correlated ($\rho \approx 0.61$), but the signal is **"Coherent Noise"** (disengaged alpha blocking).
+
 
 
 # ...existing code...

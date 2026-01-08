@@ -1,73 +1,98 @@
-# Final Project Report: Adaptive Graph Convolutional Networks (GCN) for EEG Emotion Recognition on SEED-IV
+# Final Research Report: Adaptive Graph Convolutional Networks for EEG Emotion Recognition (SEED Dataset)
 
-## 1. Introduction
+**Date:** January 9, 2026  
+**Subject:** Cross-Session Generalization, Forensic Diagnostics, and Adaptive Neural Modeling  
+**Key Result:** 83% Average Accuracy via Adaptive GCN & Feature Integration  
 
-This project aimed to develop a robust, cross-subject emotion recognition model using the SEED-IV dataset. The primary challenge in EEG analysis is the extreme variability between subjects, where physiological differences, sensor placement shifts, and environmental noise often degrade model performance when testing on unseen subjects.
+---
 
-Our approach focused on a **Graph Convolutional Network (GCN)** architecture enhanced with dynamic feature engineering and attention mechanisms. The goal was to create a "Subject-Invariant" model that could adapt to these differences without requiring subject-specific retraining.
+## Abstract
+This report documents the evolution of a Graph Neural Network (GNN) framework for emotion recognition. We address the primary bottleneck of EEG research: non-stationarity across sessions. Through a "Forensic" approach, we identify hardware pathologies and subject archetypes, ultimately developing an Adaptive DGCNN that achieves 83% accuracy by learning to ignore noise and amplify subtle neural markers.
 
-## 2. Methodology
+---
 
-### 2.1 Feature Engineering: The "Energy + Stability" Approach
-Initial experiments relied solely on **Differential Entropy (DE)** across 5 frequency bands (Delta, Theta, Alpha, Beta, Gamma). while DE captures the *magnitude* of brain activity (Energy), it failed to distinguish emotion in subjects with naturally low cortical arousal (e.g., distinguishing "Sad" from "Neutral" in low-energy subjects).
+## Chapter 1: Introduction (The Feature Pivot)
 
-To resolve this, we introduced **Rolling Variance** (5 bands) as a secondary feature set.
-- **Inputs:** 62 Channels × 10 Features (5 DE + 5 Variance).
-- **Impact:** Variance acts as a "stability" metric. A calm "Neutral" state has low DE and low Variance. A suppressed "Sad" state might have low DE but unique variance patterns. This addition was critical for resolving confusion matrices for "flat" subjects.
+The goal of this project was to classify emotions (Negative, Neutral, Positive) using the SEED dataset across three separate recording sessions. The primary challenge identified was **Session Drift**: a "Sad" brain signal from Session 1 is statistically distinct from a "Sad" signal in Session 3.
 
-### 2.2 Network Architecture: Dynamic Adaptation
-To handle the 10-feature input and varying noise levels, we evolved the standard GCN into a dynamic architecture:
+Initially, we utilized raw time-series EEG data processed through a hybrid GCN-CNN. This approach reached a hard performance ceiling below 40%. The "Grand Realization" of this phase was that raw EEG waveforms are too non-stationary; models tend to overfit to session-specific noise (like the physical pulse of the cap) rather than emotional content. We pivoted to **Differential Entropy (DE)** features across five frequency bands (Delta, Theta, Alpha, Beta, Gamma), which provided a stable, logarithmic representation of neural energy.
 
-1.  **Adaptive Graph Input Layer:** 
-    Instead of a fixed adjacency matrix (defining which electrodes are connected), we implemented a *trainable* adjacency matrix. This allows the model to learn which brain regions correlate most strongly for emotion recognition, regardless of physical distance.
+### SPECULATIONS & DISCUSSION
+* **The Gamma Signature:** We speculate the model may be acting as a high-frequency Gamma energy detector. Since Positive clips elicit higher engagement, the model might be learning "Arousal" rather than "Emotion."
+* **Feature Information Loss:** By discarding raw waves for DE, we speculate that we lose "Timing" (phase-locking) information, which may prevent reaching 90%+ accuracy.
+* **The Stimulus Mirage:** At early stages, the model may overfit to the visual properties of specific videos rather than the underlying emotional state.
 
-2.  **Squeeze-and-Excitation (SE) Blocks:**
-    We applied SE-Blocks to the feature dimension. This mechanism allows the network to dynamically weight the importance of different frequency bands per sample. For example, if a subject has excessive high-frequency noise (Gamma band artifacts), the SE-Block can learn to down-weight the Gamma channel for that specific input.
+---
 
-3.  **Global Node Attention:**
-    We replaced standard pooling with an Attention mechanism that assigns an importance score to every electrode before aggregation. This allows the model to "ignore" broken or noisy channels (e.g., a loose sensor at Cz) by assigning them near-zero weights, preventing them from contaminating the global feature vector.
+## Chapter 2: Part I - The Diagnostic Phase (The 67% Ceiling)
 
-## 3. Subject Analysis: Performance Archetypes
+Transitioning to DE features in 1-second windows provided ~50,000 samples, stabilizing training and raising accuracy to **67%**. 
 
-We observed distinct categories of performance across the 15 subjects. It is crucial to note that **all subjects were retained in the final evaluation** to provide a realistic assessment of the model's capabilities in a real-world setting.
+### 2.1 The Energy Hypothesis
+Visual analysis of feature distributions revealed the "Energy Hypothesis." The **Positive** class is easily separable because it manifests as high-intensity Gamma energy. However, **Negative vs. Neutral** classes showed significant overlap. For many subjects, the energy levels for "Boredom" and "Sadness" were mathematically identical, making the boundary invisible to a standard GCN.
 
-### Type A: The "Ideal" Subjects (e.g., Subject 6, 8, 5)
-*   **Characteristics:** High Subject-Invariant representations. Clear separation between emotion classes in the feature space.
-*   **Performance:** Consistently **>90% Accuracy**.
-*   **Insight:** These subjects validate that the GCN architecture is highly effective when high-quality EEG data is available.
 
-### Type B: The "Noisy" Subjects (e.g., Subject 10, 1)
-*   **Characteristics:** Contaminated by significant artifacts (likely muscle movement or eye blinks).
-*   **Performance:** Improved from ~65% to **~83%** via Architecture upgrades.
-*   **Insight:** The success here validates our **Attention mechanisms**. Use of SE-Blocks and Global Attention allowed the model to filter out the specific noisy channels/bands and recover accurate classification.
 
-### Type C: The "Difficult" Subjects (e.g., Subject 12, 2)
-*   **Characteristics:** These subjects present fundamental data challenges. Subject 12, in particular, exhibits periods of "flatlining" signals or extremely low physiological response.
-*   **Performance:** **<60% Accuracy**.
-*   **Analysis:**
-    *   **Trial Inflation/Bias:** On Subject 12, we observed a pattern where early trials were classified with reasonable accuracy, but performance degraded sharply in later trials within the same session. This suggests "Session Drift" or sensor impedance degradation over time.
-    *   **Intrinsic Limitation:** The model cannot recover information that is not there. If the sensors fail to capture brain activity (the "flatline" issue), no amount of architectural complexity can invent the correct label. 
-    *   **Reporting Decision:** Rather than removing these subjects, we report them as known failure modes. The model is highly accurate on valid EEG data but lacks the capability to diagnose or correct for fundamental sensor failure or subject non-compliance during data collection.
+### 2.2 The Static Topology Constraint
+Early GCNs used a fixed adjacency matrix based on physical electrode distance ($k=5$). This assumed brain regions only communicate with immediate neighbors. We found this invalid for "Hard" subjects, as a dead sensor (e.g., Cz) would act as a spatial barrier, corrupting its neighbors during graph convolution.
 
-## 4. Results Timeline
+### SPECULATIONS & DISCUSSION
+* **The Split-Brain Problem:** We speculate that dead midline sensors create a functional disconnect, preventing the model from integrating global emotional states between the left and right hemispheres.
+* **Class-Specific Trust:** We speculate that the model should dynamically trust Gamma for Positive detection but perhaps rely on Delta for low-arousal states.
 
-*   **Phase 1: Reproducibility (Accuracy: ~76%)**
-    *   Baseline GCN using only DE features.
-    *   Struggled massively with "Type B" and "Type C" subjects.
+---
 
-*   **Phase 2: Variance Injection (Accuracy: ~81%)**
-    *   Added Variance features.
-    *   Solved the specific confusion between "Neutral" and "Sad" for low-energy subjects. 
-    *   *Side Effect:* Slightly amplified noise for Subject 10, as noise has high variance.
+## Chapter 3: Part II - The Forensic Phase (Archetypes & Pathologies)
 
-*   **Phase 3: Dynamic Architecture (Final Accuracy: ~83%)**
-    *   Added SE-Blocks and Attention.
-    *   Successfully managed the noise introduced in Phase 2.
-    *   Reached the "Knowledge Ceiling" for this dataset using topological features. Further improvements would likely require domain adaptation (transfer learning) rather than architectural tuning.
+We performed "Forensic Biopsies" to categorize subjects into distinct archetypes based on signal-to-noise ratios.
 
-## 5. Conclusion
+### 3.1 Subject Archetypes
+* **The Internalizers (e.g., Subj 14):** Accuracy ~82%. Driven by the **"Green Halo"**—a stable Gamma band separation with minimal noise.
+* **The Externalizers (e.g., Subj 15):** Accuracy ~94%. Driven by **The Artifact Advantage**. The model's "Attention" locked onto channel **FC5** (muscle tension/frowning), using facial expressions as a shortcut.
+* **The Stones (e.g., Subj 12):** Accuracy ~36%. Exhibits "Neural Silence" due to systemic hardware failure (midline sinkholes).
 
-The final Adaptive GCN model achieves a robust **83% average accuracy** across 15 subjects. It successfully demonstrates:
-1.  **Noise Robustness:** Via Attention mechanisms handling Subject 10.
-2.  **State Discrimination:** Via Variance features distinguishing low-arousal states.
-3.  **Realistic Limits:** The model correctly identifies that for subjects like #12, the limiting factor is the data quality itself. Future work for such cases should focus on hardware-level signal quality indicators to reject bad trials before they reach the classifier.
+### 3.2 Hardware Pathologies
+* **Midline Sinkholes (Cz, CPz, Fz):** Systemic failure where sensors dropped to near-zero amplitude, breaking spatial convolutions.
+* **Screaming Channels (F7, T7, T8):** High-variance noise that "squashed" valid brain signals during standard normalization.
+
+### SPECULATIONS & DISCUSSION
+* **The Validity of Artifacts:** If a subject always frowns when sad, is it "cheating" to use that? We speculate that while useful for real-world wearables, it complicates the search for a purely neural emotion model.
+* **Neural Silence:** For "The Stones," we speculate the signal is **physically missing**, not just noisy—likely due to high scalp impedance or poor contact.
+
+---
+
+## Chapter 4: Part III - The Architectural Evolution (The 83% Breakthrough)
+
+Attempts 41–47 introduced the **Adaptive Graph Input Layer** and **Dynamic Learning**, breaking the 70% barrier.
+
+### 4.1 The Adaptive Layer & Variance Injection
+We implemented a learnable "Pre-Amp": $y = x \cdot \gamma + \beta$. This allowed the model to scale quiet signals and dampen loud noise. By injecting **Rolling Variance** as a secondary feature, we successfully resolved the confusion between "Neutral" and "Sad" states.
+
+### 4.2 Master Results Table
+| Model / Attempt | Accuracy | Primary Driver |
+| :--- | :--- | :--- |
+| GCN-CNN (Raw) | < 40% | Overfitting |
+| GCN v2 (1s) | 67% | DE Baseline |
+| Attempt 42/43 | 71% | Variance Features |
+| Attempt 47 | 78% | Adaptive Layer |
+| **Final DGCNN** | **83%** | **SE-Blocks (Attention)** |
+
+### SPECULATIONS & DISCUSSION
+* **The Dictator Mechanism:** The Squeeze-and-Excitation (SE) Blocks allow the model to selectively shut down irrelevant nodes. We speculate this may make the model less generalizable to new subjects with different "bad" sensors.
+* **The Variance Trap:** Variance is sensitive to movement. We speculate that sudden head movement might trigger a false positive.
+
+---
+
+## Chapter 5: Part IV - The Grand Realization (Identity & Fatigue)
+
+### 5.1 The Subject Identity Trap
+The model found it easier to learn "Who the person is" rather than "How they feel." This led to **Confidence Bloat**, where the model was 99% confident in a wrong guess because it recognized the subject's unique noise signature.
+
+### 5.2 The Fatigue Effect (Trial 15 Phenomenon)
+Accuracy drops toward the end of sessions. We speculate that **Subject Fatigue** mutes neural responses to movie clips by the 15th trial.
+
+### SPECULATIONS & DISCUSSION
+* **Personalized Artifacts:** We speculate that a "Subject ID" signature might actually be a feature, not a bug, for personalized healthcare models.
+* **Multi-Modal Future:** Reaching 90%+ likely requires secondary inputs like Heart Rate or Eye Tracking to confirm the brain's "silent" signals.
+
+---

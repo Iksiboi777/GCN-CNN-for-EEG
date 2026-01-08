@@ -63,3 +63,20 @@ Where:
 *   **Improved Convergence:** The model doesn't have to fight against scaling differences.
 *   **Robustness:** Better performance on "Hard" subjects (who usually have outlier signal properties).
 *   **Interpretability:** We can inspect the learned $\gamma$ values to see which brain regions and bands the model actually used.
+
+---
+
+## 5. Comparative Results: Adaptation Strategies
+
+The following table demonstrates the impact of moving from Static to Dynamic input cleaning.
+
+| Strategy | Mechanism | Avg Accuracy | Noise Handling (Subj 10) | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| **Baseline** | Z-Score (Static) | ~76.0% | **Failure (<65%)** | Treats artifacts as strong signals. Noise propagates through GCN. |
+| **Method A** | **Adaptive Layer** | ~80.5% | **Improved** | Learns to downweight noisy channels *globally* (for all buffers). |
+| **Method B** | **SE-Block** | ~79.0% | **Failure** | "Democracy" Pooling: One loud channel corrupts the global average. |
+| **Method C** | **Global Attention** | **~83.0%** | **Solved (>80%)** | "Dictator" Pooling: The model learns to **completely ignore** the noisy channels per-sample. |
+
+### Key Finding
+Global Attention (Method C) is the only method that successfully handled the **"Trojan Horse"** artifact in Subject 10, where high-variance noise mimicked high-arousal emotion.
+
