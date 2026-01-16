@@ -12,8 +12,9 @@ from datetime import datetime
 
 from Models.var_B import GCN_DE_Model
 from Models.var_C import DGCNN_Model
+from Models.var_D import Adaptive_DGCNN
 from Models.graph_construction import get_knn_adjacency_matrix
-from utils.training_utils import train_model_with_interrupt
+from utils.training_utils import train_model_with_interrupt, evaluate
 from utils.feature_engineering import SmartPreprocessor, get_standard_channel_names
 # from sklearn.preprocessing import RobustScaler # REMOVED to match Attempt 18
 
@@ -31,7 +32,7 @@ CONFIG_FILE = "run_config.json"
 
 # --- STRATEGY CONFIGURATION ---
 HARD_SUBJECTS = [2, 7, 12, 13] # Subjects with systemic artifacts/sinkholes
-ROLLING_VAR_WINDOW = 3         # Window size for generating variance features
+ROLLING_VAR_WINDOW = 3      # Window size for generating variance features
 
 def get_next_run_id(window_size):
     """Reads and increments the run counter from run_config.json for the specific window size"""
@@ -63,7 +64,8 @@ def get_args():
                         help="Data splitting strategy (only for sub_dep mode)")
     parser.add_argument('--window_size', type=str, default='1s', choices=['1s', '4s'],
                         help="Feature window size: '1s' or '4s'")
-    parser.add_argument('--model_type', type=str, default = 'GCN', choices=['GCN', 'DGCNN'],
+    parser.add_argument('--model_type', type=str, default = 'GCN', 
+                        choices=['GCN', 'DGCNN', 'ADAPTIVE_DGCNN'],
                         help="Type of GCN model to use")
     parser.add_argument('--test_subject', type=int, default=1, 
                         help="ID of the subject to leave out for testing (only for sub_indep mode)")
@@ -174,16 +176,22 @@ def load_de_data(data_folder, label_file):
 
                 # --- RESTORED: Variance Calculation ---
                 # Compute rolling variance (Strategy V2)
-                data_var = compute_rolling_variance(data, window_size=ROLLING_VAR_WINDOW)
+                # data_var = compute_rolling_variance(data, window_size=ROLLING_VAR_WINDOW)
                 
-                # Stack: (62, samples, 5) + (62, samples, 5) -> (62, samples, 10)
-                data_combined = np.concatenate([data, data_var], axis=2)
+                # # # Stack: (62, samples, 5) + (62, samples, 5) -> (62, samples, 10)
+                # data_combined = np.concatenate([data, data_var], axis=2)
 
-                # Transpose to (samples, 62, 10) for storage/model input
-                data_combined = np.transpose(data_combined, (1, 0, 2))
+                # # # Transpose to (samples, 62, 10) for storage/model input
+                # data_combined = np.transpose(data_combined, (1, 0, 2))
 
-                num_samples = data_combined.shape[0]
-                X_list.append(data_combined)
+
+                # 5 ORIGINAL MEAN FEATURES ONLY (FOR ATTEMPT 18 REPRODUCTION)
+                data_final = np.transpose(data, (1, 0, 2))
+
+                # 3. Calculate correct number of samples (dimension 0 of transposed data)
+                num_samples = data_final.shape[0]
+                
+                X_list.append(data_final)
                 y_list.append(np.full(num_samples, mapped_labels[trial_i - 1]))
                 session_list.append(np.full(num_samples, session_id))
                 subject_list.append(np.full(num_samples, subj_id))
@@ -210,7 +218,7 @@ def load_de_data(data_folder, label_file):
     n_groups = len(unique_groups)
     
     # Initialize arrays for stats
-    # X shape: (N, 62, 5) -> Stats shape: (n_groups, 62, 5)
+    # X shape: (N, 62, 10) -> Stats shape: (n_groups, 62, 10)
     group_sums = np.zeros((n_groups, *X.shape[1:]), dtype=X.dtype)
     group_sq_sums = np.zeros((n_groups, *X.shape[1:]), dtype=X.dtype)
     
@@ -220,12 +228,12 @@ def load_de_data(data_folder, label_file):
     # Counts per group
     group_counts = np.bincount(group_indices)
     
-    # Compute means: (n_groups, 62, 5)
+    # Compute means: (n_groups, 62, 10)
     # Reshape counts to (n_groups, 1, 1) for broadcasting
     group_means = group_sums / group_counts[:, None, None]
     
     # Broadcast means back to original sample shape
-    # shape: (N, 62, 5)
+    # shape: (N, 62, 10)
     expanded_means = group_means[group_indices]
     X_centered = X - expanded_means
     
@@ -241,52 +249,52 @@ def load_de_data(data_folder, label_file):
     return X, y, sessions, subjects, trials
 
 
-def evaluate(model, loader, base_edge_index, criterion, device, return_preds=False, return_embeddings=False):
-    model.eval()
-    correct = 0
-    total = 0
-    val_loss = 0
-    all_preds = []
-    all_labels = []
-    all_embeddings = []
+# def evaluate(model, loader, base_edge_index, criterion, device, return_preds=False, return_embeddings=False):
+#     model.eval()
+#     correct = 0
+#     total = 0
+#     val_loss = 0
+#     all_preds = []
+#     all_labels = []
+#     all_embeddings = []
     
-    with torch.no_grad():
-        for batch_X, batch_y in loader:
-            batch_X, batch_y = batch_X.to(device), batch_y.to(device)
-            curr_batch_size = batch_X.size(0)
-            batch_idx = torch.arange(curr_batch_size, device=device).repeat_interleave(62)
+#     with torch.no_grad():
+#         for batch_X, batch_y in loader:
+#             batch_X, batch_y = batch_X.to(device), batch_y.to(device)
+#             curr_batch_size = batch_X.size(0)
+#             batch_idx = torch.arange(curr_batch_size, device=device).repeat_interleave(62)
             
-            offsets = (torch.arange(curr_batch_size, device=device) * 62).view(-1, 1, 1)
-            edge_index = (base_edge_index.unsqueeze(0) + offsets).permute(1, 0, 2).reshape(2, -1)
+#             offsets = (torch.arange(curr_batch_size, device=device) * 62).view(-1, 1, 1)
+#             edge_index = (base_edge_index.unsqueeze(0) + offsets).permute(1, 0, 2).reshape(2, -1)
             
-            # Flatten features: (Batch, 62, 10) -> (Batch*62, 10)
-            batch_X_flat = batch_X.view(-1, 10)
+#             # Flatten features: (Batch, 62, 10) -> (Batch*62, 10)
+#             batch_X_flat = batch_X.view(-1, 10)
 
-            if return_embeddings:
-                outputs, embeddings = model(batch_X_flat, edge_index, batch_idx, return_embedding=True)
-                all_embeddings.extend(embeddings.cpu().numpy())
-            else:
-                outputs = model(batch_X_flat, edge_index, batch_idx)
+#             if return_embeddings:
+#                 outputs, embeddings = model(batch_X_flat, edge_index, batch_idx, return_embedding=True)
+#                 all_embeddings.extend(embeddings.cpu().numpy())
+#             else:
+#                 outputs = model(batch_X_flat, edge_index, batch_idx)
                 
-            loss = criterion(outputs, batch_y)
-            val_loss += loss.item()
+#             loss = criterion(outputs, batch_y)
+#             val_loss += loss.item()
             
-            _, predicted = torch.max(outputs.data, 1)
-            total += batch_y.size(0)
-            correct += (predicted == batch_y).sum().item()
+#             _, predicted = torch.max(outputs.data, 1)
+#             total += batch_y.size(0)
+#             correct += (predicted == batch_y).sum().item()
             
-            if return_preds:
-                all_preds.extend(predicted.cpu().numpy())
-                all_labels.extend(batch_y.cpu().numpy())
+#             if return_preds:
+#                 all_preds.extend(predicted.cpu().numpy())
+#                 all_labels.extend(batch_y.cpu().numpy())
             
-    acc = 100 * correct / total
-    avg_loss = val_loss / len(loader)
+#     acc = 100 * correct / total
+#     avg_loss = val_loss / len(loader)
     
-    if return_embeddings:
-        return avg_loss, acc, all_preds, all_labels, all_embeddings
-    if return_preds:
-        return avg_loss, acc, all_preds, all_labels
-    return avg_loss, acc
+#     if return_embeddings:
+#         return avg_loss, acc, all_preds, all_labels, all_embeddings
+#     if return_preds:
+#         return avg_loss, acc, all_preds, all_labels
+#     return avg_loss, acc
 
 def main():
     args = get_args()
@@ -374,27 +382,25 @@ def main():
     elif args.mode == 'sub_indep':
         print(f"  -> Strategy: Leave-One-Subject-Out (Test Subject: {args.test_subject})")
         test_mask = (subjects == args.test_subject)
-        val_subject_id = (args.test_subject % 15) + 1
-        val_mask = (subjects == val_subject_id)
-        train_mask = ~(test_mask | val_mask)
+        # val_subject_id = (args.test_subject % 15) + 1
+        # val_mask = (subjects == val_subject_id)
+        train_mask = ~(test_mask)
         
-        print(f"     Train Subjects: All except {args.test_subject} and {val_subject_id}")
-        print(f"     Validation Subject: {val_subject_id}")
+        print(f"     Train Subjects: All except {args.test_subject}")
         print(f"     Test Subject: {args.test_subject}")
         
         X_train, y_train = X_tensor[train_mask], y_tensor[train_mask]
-        X_val, y_val = X_tensor[val_mask], y_tensor[val_mask]
+        # X_val, y_val = X_tensor[val_mask], y_tensor[val_mask]
         X_test, y_test = X_tensor[test_mask], y_tensor[test_mask]
         
         train_loader = DataLoader(TensorDataset(X_train, y_train), batch_size=args.batch_size, shuffle=True)
-        test_loader = DataLoader(TensorDataset(X_val, y_val), batch_size=args.batch_size, shuffle=False)
-        final_test_loader = DataLoader(TensorDataset(X_test, y_test), batch_size=args.batch_size, shuffle=False)
+        test_loader = DataLoader(TensorDataset(X_test, y_test), batch_size=args.batch_size, shuffle=False)
     
     print("Constructing Graph...")
     base_edge_index = get_knn_adjacency_matrix(LOCS_FILE, k=5).to(DEVICE)
     
-    # --- UPDATE: Input Features = 10 (5 Mean + 5 Variance) ---
-    IN_FEATURES = 10
+    # --- UPDATE: Input Features = 10 (Mean + Variance Features) ---
+    IN_FEATURES = 5
     
     if args.model_type == 'GCN':
         print("Initializing Static GCN Model...")
@@ -404,7 +410,11 @@ def main():
         print("Initializing Dynamic DGCNN Model (Learnable Graph)...")
         model = DGCNN_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=64, 
                             num_classes=3, dropout_rate=0.5).to(DEVICE)
-    
+    elif args.model_type == 'ADAPTIVE_DGCNN':
+        # This is the new model with var_B's Gatekeepers and var_C's Dynamic Brain
+        model = Adaptive_DGCNN(num_nodes=62, in_features=IN_FEATURES, num_classes=3).to(DEVICE)
+        print("Using Adaptive DGCNN (var_D) - The 83% Hybrid Architecture")
+
     # --- UPDATED OPTIMIZER: STRONG REGULARIZATION FOR GAMMA ---
     # We split parameters into "gamma" (needs strong regularization) and "rest".
     
@@ -422,7 +432,8 @@ def main():
         {'params': gamma_params, 'weight_decay': 1e-2}          # Strong L2 (force small weights)
     ], lr=LEARNING_RATE)
     
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=10)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', 
+                                                     factor=0.5, patience=PATIENCE)
     
     # --- STRATEGY: Class Weights ---
     # Double penalty for Negative (Class 0) to fix Recall

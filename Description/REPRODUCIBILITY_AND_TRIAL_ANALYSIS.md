@@ -80,21 +80,7 @@ A critical finding from the Attempt 18 analysis was its performance drop-off in 
 
 ---
 
-## 5. Feature Engineering Insights
-
-### Z-Score vs. RobustScaler
-We discovered a critical numerical stability issue.
-*   **RobustScaler:** Preserves outliers (artifacts). A loose electrode might output a value of `500.0`. This causes gradient explosions in the GCN.
-*   **Z-Score (StandardScaler):** "Squashes" outliers. A value of `500.0` gets divided by the large Standard Deviation, becoming a manageable `3.0` or `4.0`.
-*   **Verdict:** **Z-Score is safer for Deep Learning** on this dataset unless we have perfect artifact removal.
-
-### Variance Features
-*   **Theory:** Variance (volatility) should help distinguish "Active" emotions (Fear/Happy) from "Passive" ones (Sad/Neutral).
-*   **Status:** We temporarily disabled them to reproduce Attempt 18, but they are likely part of the solution for the "Fatigue Effect" (tired brains might have lower variance).
-
----
-
-## 6. Future Strategy: Breaking the Identity Trap
+## 5. Future Strategy: Breaking the Identity Trap
 
 To fix the "Subject Identity Trap" and the "Fatigue Effect," we propose the following:
 

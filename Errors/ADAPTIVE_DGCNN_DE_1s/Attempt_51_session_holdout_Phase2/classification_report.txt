@@ -1,0 +1,17 @@
+Model: Adaptive_DGCNN
+Args: Namespace(mode='sub_dep', split_strategy='session_holdout', window_size='1s', model_type='ADAPTIVE_DGCNN', test_subject=1, epochs=120, batch_size=64)
+              precision    recall  f1-score   support
+
+    Negative       0.63      0.64      0.63     16800
+     Neutral       0.69      0.66      0.67     16560
+    Positive       0.69      0.71      0.70     17550
+
+    accuracy                           0.67     50910
+   macro avg       0.67      0.67      0.67     50910
+weighted avg       0.67      0.67      0.67     50910
+
+
+Confusion Matrix:
+[[10754  3315  2731]
+ [ 2920 10883  2757]
+ [ 3473  1679 12398]]

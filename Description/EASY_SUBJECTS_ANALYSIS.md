@@ -14,7 +14,6 @@
 | **Archetype** | **Type A (Pure Signal)** | **Type B (Artifact-Assisted)** | **Type A/B Mix** |
 | **Gamma Mean** | **"The Green Halo"**<br>Positive line floats significantly higher than others across the entire scalp. | **High Separation.**<br>Positive > others globally. | **High Separation.**<br>Positive > others globally. |
 | **Variance Profile** | **Low / Random.**<br>Variance is background noise. Signal strength overpowers it. | **Discriminative (Frown).**<br>Massive spike at **FC5** specifically for Negative class. | **Discriminative (Wink).**<br>Massive spike at **AF4** specifically for Positive class. |
-| **Physiology** | **Brain Only.**<br>Strong neural response to stimuli. | **Brain + Body.**<br>Neural response + Facial Muscle Tension (Frowning). | **Brain + Body.**<br>Neural response + Facial Muscle Tension (Winking/Squinting). |
 | **Bad Channels** | None significant. | None significant. | **CF2, P1** (Loose/Noisy).<br>Ignored by model due to strong global signal. |
 | **Model Strategy** | Relies on **Mean Amplitude** (Gamma). | Relies on **Variance** (FC5) + **Mean Amplitude**. | Relies on **Mean** (Global) + **Variance** (AF4). |
 

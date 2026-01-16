@@ -112,10 +112,10 @@ Subject-Specific Normalization is critical for training stability, but it does n
 
 ---
 
-## 4. Recommendations for Future Work
+<!-- ## 4. Recommendations for Future Work
 
 To improve beyond the 56% baseline, simple hyperparameter tuning is insufficient. Future attempts should focus on:
 
 1.  **Invariant Learning:** Techniques to force the model to ignore "Trial ID" (Video signature) and focus on shared emotional patterns.
 2.  **Domain Adversarial Training (DANN):** Using an adversary to penalize the model if it learns features specific to a single session or trial.
-3.  **Data Augmentation:** Injecting noise or masking channels during training to prevent memorization of specific video patterns.
+3.  **Data Augmentation:** Injecting noise or masking channels during training to prevent memorization of specific video patterns. -->
