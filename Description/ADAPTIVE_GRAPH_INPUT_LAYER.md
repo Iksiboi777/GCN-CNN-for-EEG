@@ -1,82 +1,87 @@
-# Adaptive Graph Input Layer (Learnable Input Normalization)
+# Evaluation of Adaptive Graph Learning Integration (AGLI) and Attention Mechanisms in EEG Classification
 
-**Context:** EEG Emotion Recognition using GCNs.
-**Component:** `AdaptiveGraphInputLayer` (often referred to as Learnable Attention or Adaptive Pooling in our discussions).
+## 1. Theoretical Foundations: AGLI and ML Theory
 
----
+### Defining AGLI (Adaptive Graph Learning Integration)
+Adaptive Graph Learning Integration (AGLI) is a learnable input-normalization paradigm designed to address the inherent non-stationarity of EEG signals across different subjects. Unlike static graph approaches that assume a uniform signal-to-noise ratio across all sensors, AGLI introduces an affine transformation layer applied per electrode and per feature band:
+$$y = x \cdot \gamma + \beta$$
+By making $\gamma$ (gain) and $\beta$ (bias) learnable parameters, the network effectively functions as a "Pre-Amplifier." This allows the model to mathematically suppress noise-heavy sensors (where $\gamma \to 0$) or re-scale low-impedance channels before they reach the graph convolution stages.
 
-## 1. The Problem: Inter-Subject & Inter-Session Variability
+### Dynamic Adjacency and Topological Learning
+Beyond fixed physical graphs, this research explored **Dynamic Graph CNN (DGCNN)** principles. In these models, the graph is not predefined but learned on-the-fly via a self-attention mechanism:
+$$A = \text{Softmax}\left(\frac{QK^T}{\sqrt{d}}\right)$$
+This enables the discovery of functional connectivity—synchronization between distant brain regions that are emotionally correlated—providing a data-driven alternative to anatomical priors.
 
-EEG data is notoriously non-stationary and subject-dependent.
-1.  **Impedance Mismatch:** In Session 1, the electrode contact might be perfect. In Session 2, the subject might have drier hair, leading to higher impedance and lower signal amplitude.
-2.  **Individual Differences:** Subject A might have a naturally "loud" Gamma band (high amplitude), while Subject B has a "quiet" one.
-3.  **Noise/Artifacts:** Frontal channels (Fp1, Fp2) are often corrupted by eye blinks. A standard GCN treats these noisy values as valid features, propagating errors to neighbors.
 
-**Standard Normalization (Z-Score/RobustScaler)** helps, but it is **static**. It forces everything to a mean of 0 and std of 1, but it doesn't tell the model *which* channels are reliable or *which* bands are important.
-
----
-
-## 2. The Solution: Adaptive Graph Input Layer
-
-This layer acts as a **Learnable "Pre-Amp" or Equalizer** for the brain signals. It sits *before* the GCN layers.
-
-### The Formula
-$$ y_{i,f} = x_{i,f} \cdot \gamma_{i,f} + \beta_{i,f} $$
-
-Where:
-*   $x_{i,f}$: Input feature for Node $i$ (Channel) and Feature $f$ (Frequency Band).
-*   $\gamma_{i,f}$ (**Gamma**): A learnable **Scaling Parameter**.
-*   $\beta_{i,f}$ (**Beta**): A learnable **Shift Parameter**.
-
-### How it Works (The "Magic")
-
-1.  **Noise Suppression (The Mute Button):**
-    *   If Channel `Fp1` is consistently noisy across the training set, the model learns to set $\gamma_{Fp1} \approx 0$.
-    *   This effectively "mutes" the channel before it enters the graph convolution, preventing noise propagation.
-
-2.  **Band Importance (The Bass Boost):**
-    *   If the **Gamma Band** is crucial for detecting happiness, the model learns $\gamma_{Gamma} > 1.0$ to amplify it.
-    *   If the **Theta Band** is irrelevant, it learns $\gamma_{Theta} < 0.5$ to suppress it.
-
-3.  **Domain Adaptation:**
-    *   By learning these parameters, the model finds a "Common Feature Space" where Subject A's loud Gamma and Subject B's quiet Gamma are scaled to be comparable.
 
 ---
 
-## 3. "Aggressive" vs. "Passive" Adaptation
+## 2. Motivation & Implementation
 
-### Passive (Current Implementation)
-*   **Global Parameters:** The $\gamma$ and $\beta$ are fixed parameters (shape `1x62x5`) learned over the entire training set.
-*   **Behavior:** It learns the "Average Best Settings" for the dataset. It doesn't change per sample.
+### Inter-subject Variability and Dead Channels
+EEG data is plagued by inter-subject variability (differences in skull thickness/impedance) and systemic artifacts (dead or hyperactive channels). In the SEED dataset, **Subjects 2, 12, and 13** consistently exhibited such "sinkholes."
+* **The Failure of Static Graphs:** Fixed graphs propagate noisy sensor data to neighbors, "poisoning" the local topology.
+* **The AGLI Solution:** By learning to "mute" specific sensors, AGLI prevents artifact leakage, effectively "cooling" the subject-specific error rates (the "Wall of Fire") seen in earlier heatmaps.
 
-### Aggressive (Proposed: SE-Block / Attention)
-*   **Dynamic Reweighting:** Instead of fixed parameters, we use a small neural network to predict $\gamma$ *from the input itself*.
-*   **Mechanism:** `Input -> GlobalPool -> MLP -> Weights`.
-*   **Behavior:**
-    *   If a specific trial has a huge artifact in `Fp1`, the model detects it *in real-time* and sets the weight for `Fp1` to 0 for *that specific trial*.
-    *   This is much more powerful for handling transient artifacts (like a sudden cough or blink).
-
----
-
-## 4. Expected Results
-
-*   **Improved Convergence:** The model doesn't have to fight against scaling differences.
-*   **Robustness:** Better performance on "Hard" subjects (who usually have outlier signal properties).
-*   **Interpretability:** We can inspect the learned $\gamma$ values to see which brain regions and bands the model actually used.
+### Testing Rolling Variance Computation
+A pivotal part of the feature engineering phase involved determining the optimal window for computing **Rolling Variance (Var DE)**.
+* **The Theory:** While Mean DE captures the average power, Variance captures the "texture" or volatility of the signal—a key differentiator between the erratic energy of Negative emotions and the flat signal of Neutral states.
+* **The Test (3s vs. 9s):** We tested short-term (3s) vs. long-term (9s) variance. 
+    * **9s Variance:** Proved to be a "hallucination" in training; it over-smoothed the data, diluting the emotional transitions.
+    * **3s Variance:** Provided the "sweet spot" of temporal context, allowing the SE-Block to identify frequency-specific volatility without losing the signal's sharpness.
 
 ---
 
-## 5. Comparative Results: Adaptation Strategies
+## 3. Master Table: 4s Window Model Evolution
 
-The following table demonstrates the impact of moving from Static to Dynamic input cleaning.
+The 4s era focused on establishing the baseline for GCN and the initial fragility of dynamic graph approaches.
 
-| Strategy | Mechanism | Avg Accuracy | Noise Handling (Subj 10) | Description |
-| :--- | :--- | :--- | :--- | :--- |
-| **Baseline** | Z-Score (Static) | ~76.0% | **Failure (<65%)** | Treats artifacts as strong signals. Noise propagates through GCN. |
-| **Method A** | **Adaptive Layer** | ~80.5% | **Improved** | Learns to downweight noisy channels *globally* (for all buffers). |
-| **Method B** | **SE-Block** | ~79.0% | **Failure** | "Democracy" Pooling: One loud channel corrupts the global average. |
-| **Method C** | **Global Attention** | **~83.0%** | **Solved (>80%)** | "Dictator" Pooling: The model learns to **completely ignore** the noisy channels per-sample. |
+| Attempt | Model | Features | Logic | Acc | Key Finding |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **28** | GCN | 5M + 5V | AGLI Only | 77% | Baseline; significantly limited by Subjects 2 & 12. |
+| **29** | GCN | 5M + 5V | AGLI Only | 76% | Proved 9s rolling variance is too smoothed for the signal. |
+| **30** | GCN | 5M + 5V | AGLI + SE | 81% | **Breakthrough:** SE-Block acts as an "Equalizer" for noise. |
+| **31** | GCN | 5M + 5V | AGLI + SE | **82%** | **4s Champion:** Optimized balance of spatial and spectral weights. |
+| **34** | GCN | 5 Mean | AGLI + SE | 80% | Proved Variance is needed to separate Neutral/Negative. |
+| **36** | DGCNN| 5M + 5V | AGLI + SE | 74% | DGCNN struggles with low data density in 4s windows. |
+| **37** | DGCNN| 5 Mean | AGLI + SE | 62% | Total topology collapse without Variance features. |
+| **38** | DGCNN| 5 Mean | AGLI + SE (LR 0.05)| 62% | Confirmed Mean-only is the bottleneck, not the learning rate. |
+| **39** | DGCNN| 5M + 5V | AGLI + SE (LR 0.05)| 73% | Variance helps DGCNN attention, but still inferior to GCN. |
 
-### Key Finding
-Global Attention (Method C) is the only method that successfully handled the **"Trojan Horse"** artifact in Subject 10, where high-variance noise mimicked high-arousal emotion.
+---
 
+## 4. Master Table: 1s Window Model Evolution
+
+The transition to 1s windows provided the data density required to maximize both AGLI and SE-Block performance.
+
+| Attempt | Model | Features | Logic | Acc | Key Finding |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **50** | DGCNN | 5M + 5V | AGLI Only | 79% | High density allows DGCNN to find patterns without SE. |
+| **51** | DGCNN | 5 Mean | AGLI Only | 67% | Even with more data, Mean-only features fail the DGCNN. |
+| **52** | DGCNN | 5 Mean | AGLI + SE | 69% | SE-Block acts as a "safety net" but can't replace Variance. |
+| **53** | DGCNN | 5M + 5V | AGLI + SE | 79% | SE-Block is redundant for DGCNN at high data densities. |
+| **54** | GCN | 5M + 5V | AGLI + SE | **84%** | **Overall Champion:** Perfectly balanced class recall. |
+| **55** | GCN | 5M + 5V | AGLI Only | 82% | Proved SS & SS Norm provides a massive baseline boost. |
+| **56** | GCN | 5 Mean | AGLI Only | 79% | Baseline GCN performance at 1s resolution. |
+| **57** | GCN | 5 Mean | AGLI + SE | **84%** | **Efficiency King:** Hit 83.6% accuracy in just 2 epochs. |
+
+---
+
+## 5. Comparative Analysis: The "Window Size Paradox"
+
+A critical finding was why **AdaptiveDGCNN** performs significantly worse on 4s windows compared to 1s windows, while **AdaptiveGCN** remains stable:
+1.  **Dependency Noise:** In 4s windows, the "average" signal is too coarse for dynamic attention to learn specific topological connections.
+2.  **Feature Density:** DGCNN is "data-hungry." The 50k+ samples in the 1s window provide the statistical mass needed for the $QK^T$ attention to stabilize, whereas the GCN relies on the physical prior, making it robust even with fewer samples.
+
+
+
+---
+
+## 6. Final Synthesis & Recommendations
+
+### The Best Combination
+The **Adaptive GCN + SE-Block + 1s Window** (Attempts 54/57) is the definitive architecture. It utilizes **SS & SS Normalization** to center the subject baseline, **AGLI** to fix spatial sensor noise, and **SE-Blocks** to filter spectral band energy.
+
+### Future Path: Subject-Specific Early Stopping
+Current logs show that while the global accuracy peaks late, "Hard Subjects" reach their generalization peak much earlier (e.g., Attempt 57 reaching 83.6% by Epoch 2). 
+* **Recommendation:** Implement a training loop that tracks per-subject validation accuracy and saves the "Hard-Subject Optimal" model to prevent the network from overfitting to "Easy" subjects at the expense of the outliers.
