@@ -55,14 +55,13 @@ Results/GCN_DE_1s/*
 !Results/GCN_DE_1s/Attempt_57*/
 
 
-!Results/Graph_SAGE_DE_1s/
-Results/Graph_SAGE_DE_1s/*
-!Results/Graph_SAGE_DE_1s/Attempt_48*/
+!Results/GraphSAGE_DE_1s/
+Results/GraphSAGE_DE_1s/*
+!Results/GraphSAGE_DE_1s/Attempt_48_Phase2*/
 
-!Results/Graph_SAGE_DE_4s/
-Results/Graph_SAGE_DE_4s/*
-!Results/Graph_SAGE_DE_4s/Attempt_27*/
-
+!Results/GraphSAGE_DE_4s/
+Results/GraphSAGE_DE_4s/*
+!Results/GraphSAGE_DE_4s/Attempt_27_Phase2*/
 
 # --- ERRORS FOLDER RULES ---
 # 1. Ignore everything in Errors by default
@@ -102,14 +101,13 @@ Errors/GCN_DE_1s/*
 !Errors/GCN_DE_1s/Attempt_57*/
 
 # --- GCN_DE_1s (Attempts 54-57) ---
-!Errors/Graph_SAGE_DE_1s/
-Errors/Graph_SAGE_DE_1s/*
-!Errors/Graph_SAGE_DE_1s/Attempt_48*/
+!Errors/GraphSAGE_DE_1s/
+Errors/GraphSAGE_DE_1s/*
+!Errors/GraphSAGE_DE_1s/Attempt_48_Phase2*/
 
-!Errors/Graph_SAGE_DE_4s/
-Errors/Graph_SAGE_DE_4s/*
-!Errors/Graph_SAGE_DE_4s/Attempt_27*/
-
+!Errors/GraphSAGE_DE_4s/
+Errors/GraphSAGE_DE_4s/*
+!Errors/GraphSAGE_DE_4s/Attempt_27_Phase2*/
 
 Data/
 Dataset_Papers/
