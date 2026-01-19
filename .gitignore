@@ -59,6 +59,7 @@ Results/GCN_DE_1s/*
 !Results/GraphSAGE_DE_1s/
 Results/GraphSAGE_DE_1s/*
 !Results/GraphSAGE_DE_1s/Attempt_48_Phase2*/
+!Results/GraphSAGE_DE_1s/Attempt_59_Phase2*/
 
 !Results/GraphSAGE_DE_4s/
 Results/GraphSAGE_DE_4s/*
@@ -106,6 +107,7 @@ Errors/GCN_DE_1s/*
 !Errors/GraphSAGE_DE_1s/
 Errors/GraphSAGE_DE_1s/*
 !Errors/GraphSAGE_DE_1s/Attempt_48_Phase2*/
+!Errors/GraphSAGE_DE_1s/Attempt_59_Phase2*/
 
 !Errors/GraphSAGE_DE_4s/
 Errors/GraphSAGE_DE_4s/*
