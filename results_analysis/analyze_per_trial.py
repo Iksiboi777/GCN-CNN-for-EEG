@@ -479,9 +479,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--run_id', type=str, required=True, 
                         help="Attempt ID (int) OR Folder Name (str) for Diagnostic runs")
-    parser.add_argument('--window_size', type=str, default='4s', choices=['1s', '4s'])
-    parser.add_argument('--model_type', type=str, default='GraphSAGE', choices=['GCN', 'DGCNN',
-                                                                          'GraphSAGE'], 
+    parser.add_argument('--window_size', type=str, default='1s', choices=['1s', '4s'])
+    parser.add_argument('--model_type', type=str, default='Adaptive_DGCNN', choices=['GCN', 'DGCNN',
+                                                                          'GraphSAGE', 'Adaptive_DGCNN'], 
                         help="Model type used for training (GCN, DGCNN, or GraphSAGE)")
     parser.add_argument('--mode', type=str, default='sub_dep', choices=['sub_dep', 'sub_indep', 'diagnostic'],
                         help="Training mode: 'sub_dep', 'sub_indep', or 'diagnostic'")

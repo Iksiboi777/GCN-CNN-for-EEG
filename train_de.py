@@ -32,7 +32,7 @@ CONFIG_FILE = "run_config.json"
 
 # --- STRATEGY CONFIGURATION ---
 HARD_SUBJECTS = [2, 7, 12, 13] # Subjects with systemic artifacts/sinkholes
-ROLLING_VAR_WINDOW = 3      # Window size for generating variance features
+ROLLING_VAR_WINDOW = 7      # Window size for generating variance features
 
 def get_next_run_id(window_size):
     """Reads and increments the run counter from run_config.json for the specific window size"""
@@ -64,7 +64,7 @@ def get_args():
                         help="Data splitting strategy (only for sub_dep mode)")
     parser.add_argument('--window_size', type=str, default='1s', choices=['1s', '4s'],
                         help="Feature window size: '1s' or '4s'")
-    parser.add_argument('--model_type', type=str, default = 'GCN', 
+    parser.add_argument('--model_type', type=str, default = 'ADAPTIVE_DGCNN', 
                         choices=['GCN', 'DGCNN', 'ADAPTIVE_DGCNN'],
                         help="Type of GCN model to use")
     parser.add_argument('--test_subject', type=int, default=1, 
@@ -176,22 +176,22 @@ def load_de_data(data_folder, label_file):
 
                 # --- RESTORED: Variance Calculation ---
                 # Compute rolling variance (Strategy V2)
-                # data_var = compute_rolling_variance(data, window_size=ROLLING_VAR_WINDOW)
+                data_var = compute_rolling_variance(data, window_size=ROLLING_VAR_WINDOW)
                 
-                # # # Stack: (62, samples, 5) + (62, samples, 5) -> (62, samples, 10)
-                # data_combined = np.concatenate([data, data_var], axis=2)
+                # # Stack: (62, samples, 5) + (62, samples, 5) -> (62, samples, 10)
+                data_combined = np.concatenate([data, data_var], axis=2)
 
-                # # # Transpose to (samples, 62, 10) for storage/model input
-                # data_combined = np.transpose(data_combined, (1, 0, 2))
+                # # Transpose to (samples, 62, 10) for storage/model input
+                data_combined = np.transpose(data_combined, (1, 0, 2))
 
 
                 # 5 ORIGINAL MEAN FEATURES ONLY (FOR ATTEMPT 18 REPRODUCTION)
-                data_final = np.transpose(data, (1, 0, 2))
+                # data_final = np.transpose(data, (1, 0, 2))
 
                 # 3. Calculate correct number of samples (dimension 0 of transposed data)
-                num_samples = data_final.shape[0]
+                num_samples = data_combined.shape[0]
                 
-                X_list.append(data_final)
+                X_list.append(data_combined)
                 y_list.append(np.full(num_samples, mapped_labels[trial_i - 1]))
                 session_list.append(np.full(num_samples, session_id))
                 subject_list.append(np.full(num_samples, subj_id))
@@ -400,7 +400,7 @@ def main():
     base_edge_index = get_knn_adjacency_matrix(LOCS_FILE, k=5).to(DEVICE)
     
     # --- UPDATE: Input Features = 10 (Mean + Variance Features) ---
-    IN_FEATURES = 5
+    IN_FEATURES = 10
     
     if args.model_type == 'GCN':
         print("Initializing Static GCN Model...")

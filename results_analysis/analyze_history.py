@@ -80,7 +80,7 @@ def main():
     parser.add_argument('--run_id', type=str, required=True, 
                         help="Attempt ID (int) OR Folder Name (str) for Diagnostic runs")
     parser.add_argument('--window_size', type=str, default='1s', choices=['1s', '4s'])
-    parser.add_argument('--model_type', type=str, default='GCN', choices=['GCN', 'DGCNN', 
+    parser.add_argument('--model_type', type=str, default='ADAPTIVE_DGCNN', choices=['GCN', 'DGCNN', 
                                                                                'GraphSAGE', 'ADAPTIVE_DGCNN'], 
                         help="Model type used for training (GCN, DGCNN, GraphSAGE, or ADAPTIVE_DGCNN)")
     parser.add_argument('--mode', type=str, default='sub_dep', choices=['sub_dep', 'sub_indep', 'diagnostic'],
@@ -175,7 +175,7 @@ def main():
 
     # --- 1. Confusion Matrix Evolution ---
     print("Generating Confusion Matrix Evolution...")
-    epochs_to_plot = [0, 2, 10, 15, 21, 30, 60, len(preds_history)-1]
+    epochs_to_plot = [0, 10, 20, 30, 40, 50, 56, 60, len(preds_history)-1]
     epochs_to_plot = [e for e in epochs_to_plot if e < len(preds_history)]
     
     fig, axes = plt.subplots(1, len(epochs_to_plot), figsize=(20, 4))
