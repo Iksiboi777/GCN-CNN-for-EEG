@@ -3,33 +3,72 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import SAGEConv, AttentionalAggregation
 
+class AdaptiveGraphInputLayer(nn.Module):
+    """
+    Calibrates individual electrodes before neighborhood aggregation.
+    Learns to 'mute' or 'boost' sensors based on subject-specific noise.
+    """
+    def __init__(self, num_nodes=62, in_features=10):
+        super(AdaptiveGraphInputLayer, self).__init__()
+        # Learnable scaling (gamma) and shift (beta) for every electrode-feature pair
+        self.gamma = nn.Parameter(torch.ones(1, num_nodes, in_features))
+        self.beta = nn.Parameter(torch.zeros(1, num_nodes, in_features))
+
+    def forward(self, x):
+        # x expected shape: (Batch, Nodes, Features)
+        return x * self.gamma + self.beta
+
+class SEBlock(nn.Module):
+    """
+    Squeeze-and-Excitation Block for Feature Attention.
+    Determines which frequency bands/variance features are most discriminative.
+    """
+    def __init__(self, channels, reduction=4):
+        super(SEBlock, self).__init__()
+        self.fc = nn.Sequential(
+            nn.Linear(channels, channels // reduction, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Linear(channels // reduction, channels, bias=False),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        # x: (NodesInBatch, Features)
+        # We treat each node as a sample to determine feature importance
+        y = self.fc(x) 
+        return x * y
+
 class GraphSAGE_EEG_Model(nn.Module):
-    """
-    Inductive GraphSAGE for EEG Emotion Recognition.
-    Learns robust neighborhood aggregators that generalize across subjects.
-    """
-    def __init__(self, in_features=10, hidden_dim=64, num_classes=3, aggregator='max', dropout_rate=0.5):
+    def __init__(self, num_nodes=62, in_features=10, hidden_dim=64, num_classes=3, 
+                 aggregator='max', use_se=True, dropout_rate=0.5):
         super(GraphSAGE_EEG_Model, self).__init__()
         
-        # 1. Learnable Input Scaling (Your 'Adaptive' logic)
-        # Helps normalize subject-specific impedance variations before aggregation
+        self.use_se = use_se
+        self.num_nodes = num_nodes
+
+        # 1. THE ADAPTIVE INPUT LAYER (The Sensor Pre-Amp)
+        self.agli = AdaptiveGraphInputLayer(num_nodes, in_features)
+        
+        # 2. THE SE BLOCK (Optional Band Attention)
+        if self.use_se:
+            self.se_block = SEBlock(in_features)
+
+        # 3. NORMALIZATION & SAGE LAYERS
         self.input_norm = nn.LayerNorm(in_features)
         
-        # 2. GraphSAGE Layers
-        # 'aggr' can be 'mean', 'pool' (Max-Pooling), or 'lstm'
+        # First Layer: Local Aggregation
         self.sage1 = SAGEConv(in_features, hidden_dim, aggr=aggregator)
         self.bn1 = nn.BatchNorm1d(hidden_dim)
         
+        # Second Layer: Higher-order neighborhood refinement
         self.sage2 = SAGEConv(hidden_dim, hidden_dim, aggr=aggregator)
         self.bn2 = nn.BatchNorm1d(hidden_dim)
-        
-        # 3. Global Aggregator (Readout)
-        # We use AttentionalAggregation to let the model decide 
-        # which electrodes are most "truthful" for the final prediction.
+
+        # 4. GLOBAL READOUT (Graph-level attention)
         gate_nn = nn.Linear(hidden_dim, 1)
         self.global_pool = AttentionalAggregation(gate_nn)
         
-        # 4. Final Classifier
+        # 5. CLASSIFIER
         self.classifier = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim // 2),
             nn.ReLU(),
@@ -39,29 +78,39 @@ class GraphSAGE_EEG_Model(nn.Module):
 
     def forward(self, x, edge_index, batch, return_embedding=False):
         """
-        x: (TotalNodesInBatch, InFeatures)
-        edge_index: (2, TotalEdgesInBatch)
-        batch: (TotalNodesInBatch) - map each node to its graph in the batch
+        Input x shape: (Batch*62, Features) or (Batch, 62, Features) 
+        depending on how your training_utils delivers it.
         """
-        # Step 1: Pre-process features
+        # --- PHASE 1: SENSOR CALIBRATION (AGLI) ---
+        # If x is flattened (NodesInBatch, Features), reshape to (Batch, 62, Features)
+        if x.dim() == 2:
+            num_graphs = x.size(0) // self.num_nodes
+            x = x.view(num_graphs, self.num_nodes, -1)
+            
+        x = self.agli(x)
+        
+        # Flatten back for PyG SAGEConv layers: (Batch*62, Features)
+        x = x.view(-1, x.size(-1))
+
+        # --- PHASE 2: BAND ATTENTION (SE) ---
+        if self.use_se:
+            x = self.se_block(x)
+
+        # --- PHASE 3: NEIGHBORHOOD AGGREGATION ---
         x = self.input_norm(x)
         
-        # Step 2: Layer 1 Aggregation (Neighbor -> Target)
         x = self.sage1(x, edge_index)
         x = self.bn1(x)
         x = F.relu(x)
         x = F.dropout(x, p=0.3, training=self.training)
         
-        # Step 3: Layer 2 Aggregation (Refine embeddings)
         x = self.sage2(x, edge_index)
         x = self.bn2(x)
         x = F.relu(x)
         
-        # Step 4: Global Pooling (Node Embeddings -> Graph Embedding)
-        # This converts 62 node vectors into 1 single brain-state vector
+        # --- PHASE 4: GLOBAL BRAIN STATE POOLING ---
         graph_embedding = self.global_pool(x, batch)
         
-        # Step 5: Classification
         logits = self.classifier(graph_embedding)
         
         if return_embedding:

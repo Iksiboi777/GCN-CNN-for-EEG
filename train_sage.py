@@ -34,8 +34,8 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 CONFIG_FILE = "run_config.json"
 
 # --- STRATEGY CONFIGURATION ---
-HARD_SUBJECTS = [2, 7, 12, 13] # Subjects with systemic artifacts/sinkholes
-ROLLING_VAR_WINDOW = 3         # Window size for generating variance features
+# HARD_SUBJECTS = [2, 7, 12, 13] # Subjects with systemic artifacts/sinkholes
+ROLLING_VAR_WINDOW = 9         # Window size for generating variance features
 
 def get_next_run_id(window_size):
     """Reads and increments the run counter from run_config.json for the specific window size"""
@@ -252,7 +252,7 @@ def main():
     parser = argparse.ArgumentParser(description="Train GCN-DE for EEG Emotion Recognition")
     parser.add_argument('--mode', type=str, default='sub_dep', choices=['sub_dep', 'sub_indep'])
     parser.add_argument('--aggregator', type=str, default='max', choices=['mean', 'max', 'lstm'])
-    parser.add_argument('--window_size', type=str, default='4s', choices=['1s', '4s'])
+    parser.add_argument('--window_size', type=str, default='1s', choices=['1s', '4s'])
     parser.add_argument('--test_subject', type=int, default=1)
     parser.add_argument('--epochs', type=int, default=EPOCHS, help="Number of training epochs")
     parser.add_argument('--batch_size', type=int, default=BATCH_SIZE, help="Batch size")

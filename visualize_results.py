@@ -3,103 +3,194 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 import glob
+import scipy.io
+from torch_geometric.data import Data, Batch
+from scipy.spatial import distance_matrix
 
-# Import the model and utilities from your project
+# Import the model and utilities
 from Models.var_ind_graph import GraphSAGE_EEG_Model
 from utils.feature_engineering import get_standard_channel_names
 
 # --- Configuration ---
 LOCS_FILE = "utils/channel_62_pos.locs" 
 OUTPUT_DIR = "Sage_Viz"
-SEARCH_ROOT = "Params" # Look inside this folder
-SEARCH_PATTERN = "**/best_model_checkpoint.pth" # Find checkpoints
+SEARCH_ROOT = "Params" 
+SEARCH_PATTERN = "**/best_model_checkpoint.pth" 
+DATA_DIR = os.path.join("Data", "ExtractedFeatures_1s") # Pointing to your specific folder
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-def visualize_sage_influence(model, coords, channel_names, save_path, label):
-    """Visualizes the 'importance' of electrodes after training."""
+def build_knn_graph(coords, k=5):
+    """
+    Reconstructs an approximate graph structure based on electrode distance.
+    This is necessary for GraphSAGE to pass messages.
+    """
+    dist_mat = distance_matrix(coords, coords)
+    edge_index = []
+    
+    # Iterate over each node to find k nearest neighbors
+    for i in range(len(coords)):
+        # Argsort gets indices of sorted distances. 
+        # [1:k+1] skips the node itself (dist=0)
+        neighbors = np.argsort(dist_mat[i])[1:k+1]
+        for n in neighbors:
+            edge_index.append([i, n]) # Source -> Target
+            edge_index.append([n, i]) # Target -> Source (Undirected)
+            
+    edges = torch.tensor(edge_index, dtype=torch.long).t().contiguous()
+    return edges.to(DEVICE)
+
+def get_real_seed_sample(coords, required_dim=10):
+    """
+    Loads a .mat file from ExtractedFeatures_4s to get a real brain state vector.
+    """
+    # 1. Find a .mat file
+    mat_files = glob.glob(os.path.join(DATA_DIR, "*.mat"))
+    if not mat_files:
+        print(f"  [Warn] No .mat files found in {DATA_DIR}. Using random noise.")
+        return None
+    
+    # 2. Load the first file (e.g., Subject 1, Session 1)
+    target_file = mat_files[0]
+    try:
+        mat_data = scipy.io.loadmat(target_file)
+    except Exception as e:
+        print(f"  [Warn] Failed to load {target_file}: {e}")
+        return None
+
+    # 3. Find a data key (e.g., 'de_LDS1', 'de_movingAve1')
+    data_key = None
+    for key in mat_data.keys():
+        if key.startswith('de_') or key.startswith('psd_'):
+            data_key = key
+            break
+            
+    if data_key is None:
+        print(f"  [Warn] No 'de_' or 'psd_' keys found in {os.path.basename(target_file)}")
+        return None
+
+    # 4. Extract Data: Shape is usually [Channels, Samples, Bands] or [Channels, Bands, Samples]
+    # Standard SEED extracted features: (62, Time, 5)
+    raw_cube = mat_data[data_key]
+    
+    # Basic Transpose check: we want (62, ...)
+    if raw_cube.shape[0] != 62 and raw_cube.shape[1] == 62:
+        raw_cube = np.swapaxes(raw_cube, 0, 1)
+
+    # Pick a random time window (e.g., index 10)
+    time_idx = min(10, raw_cube.shape[1] - 1)
+    x_sample = raw_cube[:, time_idx, :] # Shape: (62, 5)
+    
+    # 5. Handle Dimension Mismatch (5 vs 10)
+    # If model needs 10 but we have 5 (Standard DE w/o PSD)
+    if x_sample.shape[1] == 5 and required_dim == 10:
+        # print("  [Info] Data has 5 features. Model needs 10. Concatenating [DE, DE] for visualization.")
+        x_sample = np.concatenate([x_sample, x_sample], axis=1) # Naive fix
+    elif x_sample.shape[1] != required_dim:
+        print(f"  [Warn] Feature dimension mismatch: Model({required_dim}) vs Data({x_sample.shape[1]}).")
+        # Proceeding anyway usually crashes, so let's try to pad or cut
+        if x_sample.shape[1] > required_dim:
+            x_sample = x_sample[:, :required_dim]
+        else:
+            pad = np.zeros((62, required_dim - x_sample.shape[1]))
+            x_sample = np.concatenate([x_sample, pad], axis=1)
+
+    # 6. Build Torch Object
+    x_tensor = torch.tensor(x_sample, dtype=torch.float).to(DEVICE)
+    edge_index = build_knn_graph(coords)
+    batch = torch.zeros(len(coords), dtype=torch.long, device=DEVICE)
+    
+    return Batch(x=x_tensor, edge_index=edge_index, batch=batch)
+
+def compute_spatial_saliency(model, data):
+    """
+    Computes loss gradient w.r.t input nodes.
+    """
     model.eval()
-    with torch.no_grad():
-        try:
-            # GraphSAGE's first layer weights: (out_channels, in_channels * 2) usually due to concatenation of self+neighbor
-            # We want to see which input nodes (electrodes) have high weight norms.
-            # adjusting based on standard PyG implementation or your custom one
-            weight = model.sage1.lin_l.weight 
+    data.x.requires_grad = True
+    
+    try:
+        # Forward
+        if hasattr(data, 'batch'):
+            out = model(data.x, data.edge_index, data.batch)
+        else:
+            out = model(data.x, data.edge_index, None)
             
-            # Calculate importance: L2 norm across output dimensions
-            importance = torch.norm(weight, dim=0).cpu().numpy()
-            
-            # If the weight dimension is larger than channels (e.g. if one-hot encoding or spectral features were inputs per node),
-            # we need to be careful. Assuming 1-to-1 mapping roughly or taking the first 62 if raw features.
-            # However, usually GraphSAGE takes (N, In_Feats). The weight matrix is (Out_Feats, In_Feats).
-            # So 'importance' here shows which *Input Feature* (e.g. Delta band, Theta band) is important, 
-            # NOT necessarily which *Channel* is important, unless the graph structure itself is being weighted (GAT).
-            
-            # NOTE for User: strictly speaking, GraphSAGE weights apply to *features* (bands), not nodes (channels), 
-            # because the same weight matrix is shared across all nodes. 
-            # To visualize *Node Importance*, we typically look at attention weights (GAT) or 
-            # Gradient-based saliency maps. 
-            # BUT, since requested, let's try to map this. If features vary per channel, this might just show feature importance.
-            
-            # If we really want channel importance for SAGE, we often look at the magnitude of activations per channel 
-            # over a dataset pass. Since we can't do that without data, we will attempt to interpret 
-            # the weights if they are spatially specific (which they usually aren't in shared-weight GNNs).
-            #
-            # If your model is "var_ind_graph" (Variable Independent), maybe it doesn't share weights?
-            # Assuming standard GraphSAGE:
-            print(f"  Shape of weights: {weight.shape}")
+        # Target: Max class
+        score, _ = torch.max(out, 1)
+        score.backward()
+        
+        # Saliency: Sum of absolute gradients across features per node
+        saliency = data.x.grad.abs().sum(dim=1).cpu().numpy()
+        return saliency
+        
+    except Exception as e:
+        print(f"  [Error] Saliency computation failed: {e}")
+        return None
 
-            # Fallback A: Just plot a dummy heat map if we can't map 1-to-1 to channels
-            # because SAGE weights are (Hidden, Input_Features), not (Hidden, Num_Channels).
-            # To fix this properly, we need data to run a forward pass and measure activations.
-            # However, let's proceed with the plot logic just in case your input dim equals channel count.
-            
-            if len(importance) != 62:
-               print(f"  [Info] Weight dim ({len(importance)}) != Channel count (62). This plot shows Feature Importance, not Spatial.")
-               # We can still plot the top features if we want, but let's just create a generic plot
-               # indicating this limitation to avoid misleading graphs.
-               plt.figure()
-               plt.bar(range(len(importance)), importance)
-               plt.title(f"Feature Importance (Not Spatial)\n{label}")
-               plt.xlabel("Input Feature Index")
-               plt.ylabel("Weight Norm")
-               plt.savefig(save_path.replace(".png", "_feature_weights.png"))
-               plt.close()
-               return
+def visualize_sage_influence(model, coords, channel_names, save_path, label, required_in_ch):
+    """Generates Spatial Saliency (Scalp) and Feature Weights (Bar)."""
+    
+    # --- 1. SPATIAL IMPORTANCE (Real Data Saliency) ---
+    data = get_real_seed_sample(coords, required_dim=required_in_ch)
+    
+    # Fallback to noise if data loading failed
+    if data is None:
+        # print("  [Info] Using random noise for structural check.")
+        x = torch.randn((len(coords), required_in_ch), requires_grad=True, device=DEVICE)
+        edge_index = build_knn_graph(coords)
+        batch = torch.zeros(len(coords), dtype=torch.long, device=DEVICE)
+        data = Batch(x=x, edge_index=edge_index, batch=batch)
 
-            # Normalize
-            importance = (importance - importance.min()) / (importance.max() - importance.min() + 1e-8)
-            
-            plt.figure(figsize=(10, 8))
-            plt.scatter(coords[:, 0], coords[:, 1], c=importance, cmap='viridis', s=500, edgecolors='k')
-            
-            for i, name in enumerate(channel_names):
-                plt.annotate(name, (coords[i, 0], coords[i, 1]), ha='center', va='center', color='white', fontsize=8)
-            
-            plt.title(f"Spatial Importance? (Check Dimensions)\n{label}")
-            plt.colorbar(label='Normalized Importance')
-            plt.savefig(save_path)
-            plt.close()
-            print(f"Visualization saved to {save_path}")
+    saliency = compute_spatial_saliency(model, data)
+    
+    if saliency is not None:
+        # Normalize for heatmap
+        saliency = (saliency - saliency.min()) / (saliency.max() - saliency.min() + 1e-8)
+        
+        plt.figure(figsize=(10, 8))
+        plt.scatter(coords[:, 0], coords[:, 1], c=saliency, cmap='jet', s=600, edgecolors='k')
+        
+        for i, name in enumerate(channel_names):
+            plt.annotate(name, (coords[i, 0], coords[i, 1]), ha='center', va='center', color='white', fontsize=8, weight='bold')
+        
+        plt.title(f"GraphSAGE Saliency Map\n(High Value = High Impact on Emotion Prediction)\n{label}")
+        plt.colorbar(label='Gradient Magnitude')
+        plt.axis('off') # Remove axis box for cleaner look
+        plt.savefig(save_path)
+        plt.close()
+        print(f"  -> Saliency Map saved to {save_path}")
 
-        except AttributeError:
-             print(f"Error: Could not access model.sage1.lin_l.weight for {label}")
-        except Exception as e:
-            print(f"An error occurred visualizing {label}: {e}")
+    # --- 2. FEATURE IMPORTANCE (Model Weights) ---
+    try:
+        weight = model.sage1.lin_l.weight.detach().cpu().numpy() # [Out_Dim, In_Features]
+        feature_importance = np.linalg.norm(weight, axis=0) # [In_Features]
+        
+        plt.figure(figsize=(6, 4))
+        plt.bar(range(len(feature_importance)), feature_importance, color='skyblue', edgecolor='black')
+        plt.title(f"Feature Band Importance\n{label}")
+        plt.xlabel("Input Dimension Index")
+        plt.ylabel("Weight Norm")
+        plt.grid(axis='y', linestyle='--', alpha=0.7)
+        plt.tight_layout()
+        plt.savefig(save_path.replace(".png", "_features.png"))
+        plt.close()
+        # print(f"  -> Feature weights saved.")
+    except:
+        pass
 
 def main():
     if not os.path.exists(OUTPUT_DIR):
         os.makedirs(OUTPUT_DIR)
-        print(f"Created directory: {OUTPUT_DIR}")
 
     if not os.path.exists(LOCS_FILE):
         print(f"Error: Locations file not found at {LOCS_FILE}")
         return
 
+    # Load locations
+    # Format: [Number, X, Y, Label] -> We need cols 1,2
     coords = np.loadtxt(LOCS_FILE, usecols=(1, 2)) 
     channel_names = get_standard_channel_names()
 
-    # Construct the full search path
-    # glob will look like: Params/**/best_model_checkpoint.pth
     full_search_path = os.path.join(SEARCH_ROOT, SEARCH_PATTERN)
     model_files = glob.glob(full_search_path, recursive=True)
     
@@ -107,39 +198,37 @@ def main():
         print(f"No models found matching: {full_search_path}")
         return
 
-    print(f"Found {len(model_files)} models in {SEARCH_ROOT}...")
+    print(f"Found {len(model_files)} models. Generating visualizations...")
 
     for path in model_files:
-        # path example: Params\GraphSAGE_DE_4s\Attempt_27_Phase2\best_model_checkpoint.pth
+        path = os.path.normpath(path)
+        parts = path.split(os.sep)
         
-        # Get the parts of the path
-        parts = os.path.normpath(path).split(os.sep)
-        # Assuming structure: Params / ModelName / AttemptName / file
+        # Heuristic Labeling
         if len(parts) >= 4:
-            model_name = parts[-3] # GraphSAGE_DE_4s
-            attempt_name = parts[-2] # Attempt_27_Phase2
+            model_name = parts[-3] 
+            attempt_name = parts[-2]
             label = f"{model_name}_{attempt_name}"
         else:
             label = os.path.basename(os.path.dirname(path))
         
         print(f"Processing: {label}")
         
-        # Initialize model 
-        model = GraphSAGE_EEG_Model(
-            in_features=10,  # 10 features (5 bands * 2 for DE? or just 5?) check your config!
-            hidden_dim=64, 
-            aggregator='max' 
-        ).to(DEVICE)
-
+        # --- Check Model Config ---
+        # Heuristic: Try to determine if it's 1s or 4s or specific DE model
+        # Defaulting to 10 features as per user context, but try/except handles mismatches
+        in_feats = 10 
+        
         try:
+            model = GraphSAGE_EEG_Model(in_features=in_feats, hidden_dim=64, aggregator='max').to(DEVICE)
             state_dict = torch.load(path, map_location=DEVICE)
             model.load_state_dict(state_dict)
             
-            save_filename = os.path.join(OUTPUT_DIR, f"viz_{label}.png")
-            visualize_sage_influence(model, coords, channel_names, save_filename, label)
+            save_filename = os.path.join(OUTPUT_DIR, f"Saliency_{label}.png")
+            visualize_sage_influence(model, coords, channel_names, save_filename, label, in_feats)
 
         except RuntimeError as rt_err:
-             print(f"  [Error] Dimension mismatch loading {label}. Check 'in_features'. Error: {rt_err}")
+             print(f"  [Error] Dimension mismatch (likely in_features != 10). Details: {rt_err}")
         except Exception as e:
             print(f"  [Error] Failed processing {path}: {e}")
 
