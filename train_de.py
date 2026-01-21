@@ -249,53 +249,6 @@ def load_de_data(data_folder, label_file):
     return X, y, sessions, subjects, trials
 
 
-# def evaluate(model, loader, base_edge_index, criterion, device, return_preds=False, return_embeddings=False):
-#     model.eval()
-#     correct = 0
-#     total = 0
-#     val_loss = 0
-#     all_preds = []
-#     all_labels = []
-#     all_embeddings = []
-    
-#     with torch.no_grad():
-#         for batch_X, batch_y in loader:
-#             batch_X, batch_y = batch_X.to(device), batch_y.to(device)
-#             curr_batch_size = batch_X.size(0)
-#             batch_idx = torch.arange(curr_batch_size, device=device).repeat_interleave(62)
-            
-#             offsets = (torch.arange(curr_batch_size, device=device) * 62).view(-1, 1, 1)
-#             edge_index = (base_edge_index.unsqueeze(0) + offsets).permute(1, 0, 2).reshape(2, -1)
-            
-#             # Flatten features: (Batch, 62, 10) -> (Batch*62, 10)
-#             batch_X_flat = batch_X.view(-1, 10)
-
-#             if return_embeddings:
-#                 outputs, embeddings = model(batch_X_flat, edge_index, batch_idx, return_embedding=True)
-#                 all_embeddings.extend(embeddings.cpu().numpy())
-#             else:
-#                 outputs = model(batch_X_flat, edge_index, batch_idx)
-                
-#             loss = criterion(outputs, batch_y)
-#             val_loss += loss.item()
-            
-#             _, predicted = torch.max(outputs.data, 1)
-#             total += batch_y.size(0)
-#             correct += (predicted == batch_y).sum().item()
-            
-#             if return_preds:
-#                 all_preds.extend(predicted.cpu().numpy())
-#                 all_labels.extend(batch_y.cpu().numpy())
-            
-#     acc = 100 * correct / total
-#     avg_loss = val_loss / len(loader)
-    
-#     if return_embeddings:
-#         return avg_loss, acc, all_preds, all_labels, all_embeddings
-#     if return_preds:
-#         return avg_loss, acc, all_preds, all_labels
-#     return avg_loss, acc
-
 def main():
     args = get_args()
     print(f"Using device: {DEVICE}")

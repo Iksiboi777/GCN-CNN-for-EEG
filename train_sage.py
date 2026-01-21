@@ -59,24 +59,6 @@ def get_next_run_id(window_size):
     return next_id
 
 
-# def build_inductive_dataset(features, labels, coordinates, k=5):
-#     """Converts raw EEG arrays into a list of PyG Data objects."""
-#     dist_matrix = squareform(pdist(coordinates))
-#     edge_index_list = []
-#     for i in range(len(coordinates)):
-#         nn_indices = np.argsort(dist_matrix[i])[1:k+1]
-#         for nn in nn_indices:
-#             edge_index_list.append([nn, i])
-    
-#     edge_index = torch.tensor(edge_index_list, dtype=torch.long).t().contiguous()
-    
-#     dataset = []
-#     for i in range(features.shape[0]):
-#         x = torch.tensor(features[i], dtype=torch.float)
-#         y = torch.tensor(labels[i], dtype=torch.long)
-#         dataset.append(Data(x=x, edge_index=edge_index, y=y))
-#     return dataset, edge_index
-
 
 def compute_rolling_variance(data, window_size=3):
     """
@@ -184,13 +166,16 @@ def load_de_data(data_folder, label_file):
                 data_var = compute_rolling_variance(data, window_size=ROLLING_VAR_WINDOW)
                 
                 # Stack: (62, samples, 5) + (62, samples, 5) -> (62, samples, 10)
-                data_combined = np.concatenate([data, data_var], axis=2)
+                data_final = np.concatenate([data, data_var], axis=2)
 
                 # Transpose to (samples, 62, 10) for storage/model input
-                data_combined = np.transpose(data_combined, (1, 0, 2))
+                data_final = np.transpose(data_final, (1, 0, 2))
 
-                num_samples = data_combined.shape[0]
-                X_list.append(data_combined)
+                # 5 ORIGINAL MEAN FEATURES ONLY (FOR ATTEMPT 18 REPRODUCTION)
+                # data_final = np.transpose(data, (1, 0, 2))
+
+                num_samples = data_final.shape[0]
+                X_list.append(data_final)
                 y_list.append(np.full(num_samples, mapped_labels[trial_i - 1]))
                 session_list.append(np.full(num_samples, session_id))
                 subject_list.append(np.full(num_samples, subj_id))
@@ -329,15 +314,34 @@ def main():
 
     # 4. Initialize Model
     in_features = X_train.shape[-1] # Should be 10 (DE + Var)
+    print("Input feature dimension: ", in_features)
     model = GraphSAGE_EEG_Model(
         in_features=in_features, 
         hidden_dim=128, 
         aggregator=args.aggregator
     ).to(DEVICE)
 
-    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE, weight_decay=1e-3)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=PATIENCE, mode = 'min', factor=0.5)
-    criterion = nn.CrossEntropyLoss()
+    gamma_params = []
+    other_params = []
+    
+    for name, param in model.named_parameters():
+        if 'static_norm.gamma' in name:
+            gamma_params.append(param)
+        else:
+            other_params.append(param)
+            
+    optimizer = optim.Adam([
+        {'params': other_params, 'weight_decay': WEIGHT_DECAY}, # Normal L2
+        {'params': gamma_params, 'weight_decay': 1e-2}          # Strong L2 (force small weights)
+    ], lr=LEARNING_RATE)
+    
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', 
+                                                     factor=0.5, patience=PATIENCE)
+    
+    # --- STRATEGY: Class Weights ---
+    # Double penalty for Negative (Class 0) to fix Recall
+    class_weights = torch.tensor([1.2, 0.9, 1.0]).to(DEVICE)
+    criterion = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=0.1)
 
     # 5. Execute Training using existing training_utils.py
     print(f"Starting GraphSAGE Training with {args.aggregator} aggregator...")
