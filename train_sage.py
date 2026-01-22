@@ -35,7 +35,7 @@ CONFIG_FILE = "run_config.json"
 
 # --- STRATEGY CONFIGURATION ---
 # HARD_SUBJECTS = [2, 7, 12, 13] # Subjects with systemic artifacts/sinkholes
-ROLLING_VAR_WINDOW = 9         # Window size for generating variance features
+ROLLING_VAR_WINDOW = 3         # Window size for generating variance features
 
 def get_next_run_id(window_size):
     """Reads and increments the run counter from run_config.json for the specific window size"""

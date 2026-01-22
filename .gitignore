@@ -12,6 +12,9 @@ gcn_venv/
 # --- GLOBAL IGNORE FOR NPY FILES ---
 # This ensures that even if a folder is whitelisted below, the .npy files inside it are ignored.
 *.npy
+*.pth
+
+Params/*
 
 .venv/
 
@@ -29,6 +32,7 @@ Results/GCN_DE_4s/*
 !Results/GCN_DE_4s/Attempt_30*/
 !Results/GCN_DE_4s/Attempt_31*/
 !Results/GCN_DE_4s/Attempt_34*/
+!Results/GCN_DE_4s/Attempt_54*/
 
 # --- ADAPTIVE_DGCNN_DE_4s (Attempts 36-39) ---
 !Results/ADAPTIVE_DGCNN_DE_4s/
@@ -38,7 +42,7 @@ Results/ADAPTIVE_DGCNN_DE_4s/*
 !Results/ADAPTIVE_DGCNN_DE_4s/Attempt_38*/
 !Results/ADAPTIVE_DGCNN_DE_4s/Attempt_39*/
 
-# --- ADAPTIVE_DGCNN_DE_1s (Attempts 50-53) ---
+# --- ADAPTIVE_DGCNN_DE_1s (Attempts 50-53, 58) ---
 !Results/ADAPTIVE_DGCNN_DE_1s/
 Results/ADAPTIVE_DGCNN_DE_1s/*
 !Results/ADAPTIVE_DGCNN_DE_1s/Attempt_50*/
@@ -55,7 +59,7 @@ Results/GCN_DE_1s/*
 !Results/GCN_DE_1s/Attempt_56*/
 !Results/GCN_DE_1s/Attempt_57*/
 
-
+# --- GCN_DE_1s (Attempts 48, 59) ---
 !Results/GraphSAGE_DE_1s/
 Results/GraphSAGE_DE_1s/*
 !Results/GraphSAGE_DE_1s/Attempt_48_Phase2*/
@@ -64,6 +68,7 @@ Results/GraphSAGE_DE_1s/*
 !Results/GraphSAGE_DE_4s/
 Results/GraphSAGE_DE_4s/*
 !Results/GraphSAGE_DE_4s/Attempt_27_Phase2*/
+
 
 # --- ERRORS FOLDER RULES ---
 # 1. Ignore everything in Errors by default
@@ -77,6 +82,7 @@ Errors/GCN_DE_4s/*
 !Errors/GCN_DE_4s/Attempt_30*/
 !Errors/GCN_DE_4s/Attempt_31*/
 !Errors/GCN_DE_4s/Attempt_34*/
+!Errors/GCN_DE_4s/Attempt_54*/
 
 # --- ADAPTIVE_DGCNN_DE_4s (Attempts 36-39) ---
 !Errors/ADAPTIVE_DGCNN_DE_4s/

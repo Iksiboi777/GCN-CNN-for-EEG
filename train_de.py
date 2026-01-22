@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import TensorDataset, DataLoader
+from sklearn.metrics import classification_report, confusion_matrix
 import numpy as np
 import scipy.io
 import os
@@ -18,13 +19,16 @@ from utils.training_utils import train_model_with_interrupt, evaluate
 from utils.feature_engineering import SmartPreprocessor, get_standard_channel_names
 # from sklearn.preprocessing import RobustScaler # REMOVED to match Attempt 18
 
+import torch.multiprocessing as mp
+
+
 # --- Configuration ---
 LOCS_FILE = "utils/channel_62_pos.locs"
-BATCH_SIZE = 64
-EPOCHS = 120
-LEARNING_RATE = 0.0005
+BATCH_SIZE = 512
+EPOCHS = 100
+LEARNING_RATE = 0.0008
 WEIGHT_DECAY = 1e-3 
-PATIENCE = 30
+PATIENCE = 25
 # --- NEW: Sparsity Penalty for Adaptive Layer ---
 L1_LAMBDA = 1e-4  # Force gamma parameters towards zero
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -32,7 +36,8 @@ CONFIG_FILE = "run_config.json"
 
 # --- STRATEGY CONFIGURATION ---
 HARD_SUBJECTS = [2, 7, 12, 13] # Subjects with systemic artifacts/sinkholes
-ROLLING_VAR_WINDOW = 7      # Window size for generating variance features
+ROLLING_VAR_WINDOW = 9      # Window size for generating variance features
+
 
 def get_next_run_id(window_size):
     """Reads and increments the run counter from run_config.json for the specific window size"""
@@ -57,23 +62,18 @@ def get_next_run_id(window_size):
 
 def get_args():
     parser = argparse.ArgumentParser(description="Train GCN-DE for EEG Emotion Recognition")
-    parser.add_argument('--mode', type=str, default='sub_dep', choices=['sub_dep', 'sub_indep'],
+    parser.add_argument('--mode', type=str, default='sub_indep', choices=['sub_dep', 'sub_indep'],
                         help="Training mode: 'sub_dep' (Session split) or 'sub_indep' (LOSO)")
-    parser.add_argument('--split_strategy', type=str, default='session_holdout', 
-                        choices=['session_holdout', 'random'],
-                        help="Data splitting strategy (only for sub_dep mode)")
-    parser.add_argument('--window_size', type=str, default='1s', choices=['1s', '4s'],
+    parser.add_argument('--window_size', type=str, default='4s', choices=['1s', '4s'],
                         help="Feature window size: '1s' or '4s'")
-    parser.add_argument('--model_type', type=str, default = 'ADAPTIVE_DGCNN', 
+    parser.add_argument('--model_type', type=str, default = 'GCN', 
                         choices=['GCN', 'DGCNN', 'ADAPTIVE_DGCNN'],
                         help="Type of GCN model to use")
-    parser.add_argument('--test_subject', type=int, default=1, 
-                        help="ID of the subject to leave out for testing (only for sub_indep mode)")
-    parser.add_argument('--epochs', type=int, default=EPOCHS, help="Number of training epochs")
-    parser.add_argument('--batch_size', type=int, default=BATCH_SIZE, help="Batch size")
+    parser.add_argument('--max_parallel', type=int, default=1, 
+                        help="Maximum number of parallel processes")
     return parser.parse_args()
 
-def compute_rolling_variance(data, window_size=3):
+def compute_rolling_variance(data, window_size=ROLLING_VAR_WINDOW):
     """
     Computes rolling variance along the time axis (axis 1).
     Input: (62, samples, 5)
@@ -88,6 +88,7 @@ def compute_rolling_variance(data, window_size=3):
         vars_list.append(np.var(slice_data, axis=1))
         
     return np.stack(vars_list, axis=1)
+
 
 def load_de_data(data_folder, label_file):
     print(f"Loading DE features from {data_folder}...")
@@ -249,152 +250,73 @@ def load_de_data(data_folder, label_file):
     return X, y, sessions, subjects, trials
 
 
-def main():
-    args = get_args()
-    print(f"Using device: {DEVICE}")
-    print(f"Mode: {args.mode} | Window: {args.window_size}")
 
-    if args.window_size == '1s':
-        data_folder = "Data/ExtractedFeatures_1s"
-    else:
-        data_folder = "Data/ExtractedFeatures_4s"
-    label_file = os.path.join(data_folder, "label.mat")
-    
-    run_id = get_next_run_id(args.window_size)
-    
-    model_name = f"{args.model_type}_DE_{args.window_size}"
+# -----------------------------------------------------------------------------
+# WRAPPER FUNCTION FOR A SINGLE SUBJECT FOLD (Isolated Process)
+# -----------------------------------------------------------------------------
+def run_single_subject_fold(subject_id, args, X_full, y_full, sub_full, 
+                            base_edge_index, run_id, model_name):
+    """
+    Runs training and evaluation for one specific subject in a separate process.
+    """
+    # 1. Device Assignment
+    num_gpus = torch.cuda.device_count()
+    local_device = torch.device(f"cuda:{subject_id % num_gpus}" if num_gpus > 0 else "cpu")
+    print(f"\n[PROCESS START] Subject {subject_id} assigned to {local_device}")
 
-    if args.mode == 'sub_dep':
-        run_name = f"Attempt_{run_id}_{args.split_strategy}_Phase2"
-    else:
-        run_name = f"Attempt_{run_id}_LOSO_sub{args.test_subject}_Phase2"
-    
-    results_dir = os.path.join("Results", model_name, run_name)
-    params_dir = os.path.join("Params", model_name, run_name)
-    errors_dir = os.path.join("Errors", model_name, run_name)
+    # 2. Data Splitting (Train on 14, Test on 1)
+    test_mask = (sub_full == subject_id)
+    X_train, y_train = X_full[~test_mask], y_full[~test_mask]
+    X_test, y_test = X_full[test_mask], y_full[test_mask]
 
+    IN_FEATURES = 10
+
+    # 3. Model Initialization (Fresh weights, zero leakage)
+    if args.model_type == 'GCN':
+        model = GCN_DE_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=128, 
+                             num_classes=3, dropout_rate=0.5, num_layers=2).to(local_device)
+    elif args.model_type == 'DGCNN':
+        model = DGCNN_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=64, 
+                            num_classes=3, dropout_rate=0.5).to(local_device)
+    elif args.model_type == 'ADAPTIVE_DGCNN':
+        model = Adaptive_DGCNN(num_nodes=62, in_features=IN_FEATURES, num_classes=3).to(local_device)
+
+    # 4. Optimizer Setup (Split for Gamma regularization)
+    gamma_params = [p for n, p in model.named_parameters() if 'static_norm.gamma' in n]
+    other_params = [p for n, p in model.named_parameters() if 'static_norm.gamma' not in n]
+    
+    optimizer = optim.Adam([
+        {'params': other_params, 'weight_decay': WEIGHT_DECAY},
+        {'params': gamma_params, 'weight_decay': 1e-2} 
+    ], lr=LEARNING_RATE)
+
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=PATIENCE)
+    criterion = nn.CrossEntropyLoss(weight=torch.tensor([1.2, 0.9, 1.0]).to(local_device), label_smoothing=0.1)
+
+    # 5. Directory Setup
+    run_name = f"Attempt_{run_id}_LOSO_Parallel"
+    results_dir = os.path.join("Results", model_name, run_name, f"Subject_{subject_id}")
+    errors_dir = os.path.join("Errors", model_name, run_name, f"Subject_{subject_id}")
+    params_dir = os.path.join("Params", model_name, run_name, f"Subject_{subject_id}")
+    
     os.makedirs(results_dir, exist_ok=True)
     os.makedirs(params_dir, exist_ok=True)
     os.makedirs(errors_dir, exist_ok=True)
-    
-    print(f"Directories:")
-    print(f"  Results: {results_dir}")
-    print(f"  Params:  {params_dir}")
-    print(f"  Errors:  {errors_dir}")
 
-    X, y, sessions, subjects, trials = load_de_data(data_folder, label_file)
-    
-    X_tensor = torch.tensor(X, dtype=torch.float32)
-    y_tensor = torch.tensor(y, dtype=torch.long)
-    
-    if args.mode == 'sub_dep':
-        if args.split_strategy == 'session_holdout':
-            print("  -> Strategy: Session Holdout (Train on S1+S2, Test on S3)")
-            train_mask = (sessions == 1) | (sessions == 2)
-            test_mask = (sessions == 3)
-            
-            X_train, y_train = X_tensor[train_mask], y_tensor[train_mask]
-            X_test, y_test = X_tensor[test_mask], y_tensor[test_mask]
-            
-            train_loader = DataLoader(TensorDataset(X_train, y_train), batch_size=args.batch_size, shuffle=True)
-            test_loader = DataLoader(TensorDataset(X_test, y_test), batch_size=args.batch_size, shuffle=False)
-            
-        elif args.split_strategy == 'random':
-            print("  -> Strategy: Random Split (80% Train, 20% Test, shuffled across sessions)")
-            test_indices_list = []
-            unique_sub_sess = np.unique(np.stack((subjects, sessions), axis=1), axis=0)
-            
-            for sub, sess in unique_sub_sess:
-                mask = (subjects == sub) & (sessions == sess)
-                sess_trials = np.unique(trials[mask])
-                trials_by_label = {0: [], 1: [], 2: []}
-                for t_id in sess_trials:
-                    t_label = y[trials == t_id][0]
-                    trials_by_label[t_label].append(t_id)
-                
-                for label in [0, 1, 2]:
-                    available_trials = trials_by_label[label]
-                    if len(available_trials) > 0:
-                        test_trial = available_trials[-1] 
-                        t_indices = np.where(trials == test_trial)[0]
-                        test_indices_list.append(t_indices)
-            
-            test_indices = np.concatenate(test_indices_list)
-            test_mask = np.zeros(len(y), dtype=bool)
-            test_mask[test_indices] = True
-            train_mask = ~test_mask
-            
-            X_train, y_train = X_tensor[train_mask], y_tensor[train_mask]
-            X_test, y_test = X_tensor[test_mask], y_tensor[test_mask]
-            
-            print(f"     Train Samples: {len(X_train)} | Test Samples: {len(X_test)}")
-            
-            train_loader = DataLoader(TensorDataset(X_train, y_train), batch_size=args.batch_size, shuffle=True)
-            test_loader = DataLoader(TensorDataset(X_test, y_test), batch_size=args.batch_size, shuffle=False)
+    train_loader = DataLoader(TensorDataset(X_train, y_train), 
+                                batch_size=BATCH_SIZE, 
+                                shuffle=True,
+                                num_workers=8,      # <--- INCREASE THIS
+                                pin_memory=True,    # <--- ENABLE THIS
+                                persistent_workers=True)
+    test_loader = DataLoader(TensorDataset(X_test, y_test), 
+                                batch_size=BATCH_SIZE, 
+                                shuffle=False,
+                                num_workers=8,      # <--- INCREASE THIS
+                                pin_memory=True,    # <--- ENABLE THIS
+                                persistent_workers=True)
 
-    elif args.mode == 'sub_indep':
-        print(f"  -> Strategy: Leave-One-Subject-Out (Test Subject: {args.test_subject})")
-        test_mask = (subjects == args.test_subject)
-        # val_subject_id = (args.test_subject % 15) + 1
-        # val_mask = (subjects == val_subject_id)
-        train_mask = ~(test_mask)
-        
-        print(f"     Train Subjects: All except {args.test_subject}")
-        print(f"     Test Subject: {args.test_subject}")
-        
-        X_train, y_train = X_tensor[train_mask], y_tensor[train_mask]
-        # X_val, y_val = X_tensor[val_mask], y_tensor[val_mask]
-        X_test, y_test = X_tensor[test_mask], y_tensor[test_mask]
-        
-        train_loader = DataLoader(TensorDataset(X_train, y_train), batch_size=args.batch_size, shuffle=True)
-        test_loader = DataLoader(TensorDataset(X_test, y_test), batch_size=args.batch_size, shuffle=False)
-    
-    print("Constructing Graph...")
-    base_edge_index = get_knn_adjacency_matrix(LOCS_FILE, k=5).to(DEVICE)
-    
-    # --- UPDATE: Input Features = 10 (Mean + Variance Features) ---
-    IN_FEATURES = 10
-    
-    if args.model_type == 'GCN':
-        print("Initializing Static GCN Model...")
-        model = GCN_DE_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=64, 
-                             num_classes=3, dropout_rate=0.5, num_layers=3).to(DEVICE)
-    elif args.model_type == 'DGCNN':
-        print("Initializing Dynamic DGCNN Model (Learnable Graph)...")
-        model = DGCNN_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=64, 
-                            num_classes=3, dropout_rate=0.5).to(DEVICE)
-    elif args.model_type == 'ADAPTIVE_DGCNN':
-        # This is the new model with var_B's Gatekeepers and var_C's Dynamic Brain
-        model = Adaptive_DGCNN(num_nodes=62, in_features=IN_FEATURES, num_classes=3).to(DEVICE)
-        print("Using Adaptive DGCNN (var_D) - The 83% Hybrid Architecture")
-
-    # --- UPDATED OPTIMIZER: STRONG REGULARIZATION FOR GAMMA ---
-    # We split parameters into "gamma" (needs strong regularization) and "rest".
-    
-    gamma_params = []
-    other_params = []
-    
-    for name, param in model.named_parameters():
-        if 'static_norm.gamma' in name:
-            gamma_params.append(param)
-        else:
-            other_params.append(param)
-            
-    optimizer = optim.Adam([
-        {'params': other_params, 'weight_decay': WEIGHT_DECAY}, # Normal L2
-        {'params': gamma_params, 'weight_decay': 1e-2}          # Strong L2 (force small weights)
-    ], lr=LEARNING_RATE)
-    
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', 
-                                                     factor=0.5, patience=PATIENCE)
-    
-    # --- STRATEGY: Class Weights ---
-    # Double penalty for Negative (Class 0) to fix Recall
-    class_weights = torch.tensor([1.2, 0.9, 1.0]).to(DEVICE)
-    criterion = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=0.1)
-
-    # --- CLEAN CALL TO MASTER TRAINING FUNCTION ---
-    # This handles the loop, saving, interrupts, and the dimension fix internally.
+    # 6. Training Call
     train_model_with_interrupt(
         model=model,
         train_loader=train_loader,
@@ -402,30 +324,215 @@ def main():
         optimizer=optimizer,
         criterion=criterion,
         scheduler=scheduler,
-        epochs=args.epochs,
-        device=DEVICE,
-        # patience=PATIENCE,
+        epochs=EPOCHS,
+        device=local_device,
         results_dir=results_dir,
         params_dir=params_dir,
         errors_dir=errors_dir,
-        base_edge_index=base_edge_index,
+        subject_tag = f"Subject_{subject_id}",
+        base_edge_index=base_edge_index.to(local_device),
         evaluate_fn=evaluate,
-        hyperparams=args,
-        in_features=IN_FEATURES  # Passing the critical 10 features argument
+        in_features=IN_FEATURES
     )
 
+
+def main():
+    args = get_args()
+    
+    # 1. Data Prep
+    data_folder = f"Data/ExtractedFeatures_{args.window_size}"
+    label_file = os.path.join(data_folder, "label.mat")
+    
+    X, y, sessions, subjects, _ = load_de_data(data_folder, label_file)
+    
+    # 2. Share Tensors in Memory (Crucial for multiprocessing)
+    X_tensor = torch.tensor(X, dtype=torch.float32).share_memory_()
+    y_tensor = torch.tensor(y, dtype=torch.long).share_memory_()
+    sub_tensor = torch.tensor(subjects, dtype=torch.long).share_memory_()
+    base_edge_index = get_knn_adjacency_matrix(LOCS_FILE, k=5).share_memory_()
+
+    # 3. Setup Runs
+    run_id = get_next_run_id(args.window_size)
+    model_name = f"{args.model_type}_DE_{args.window_size}"
+
     if args.mode == 'sub_indep':
-        print("\n>>> Running Final Test on Held-out Subject...")
-        best_model_path = os.path.join(params_dir, "best_model_checkpoint.pth")
-        if os.path.exists(best_model_path):
-            model.load_state_dict(torch.load(best_model_path))
-            print("Loaded best model from validation phase.")
+        print("Running Leave-One-Subject-Out with Parallel Processing...")    
+        processes = []
+        subject_list = list(range(1, 16))
         
-        test_loss, test_acc, preds, true_labels = evaluate(model, final_test_loader, base_edge_index, criterion, DEVICE, return_preds=True)
-        print(f"FINAL TEST RESULTS (Subject {args.test_subject}):")
-        print(f"Loss: {test_loss:.4f} | Accuracy: {test_acc:.2f}%")
+        # Chunk the 15 subjects into groups of MAX_PARALLEL
+        for i in range(0, 15, args.max_parallel):
+            chunk = subject_list[i : i + args.max_parallel]
+            print(f"\n--- Starting Chunk: Subjects {chunk} ---")
+            
+            for sub_id in chunk:
+                # REMOVED shared_results from args
+                p = mp.Process(target=run_single_subject_fold, 
+                               args=(sub_id, args, X_tensor, y_tensor, 
+                                     sub_tensor, base_edge_index, run_id, 
+                                     model_name))
+                p.start()
+                processes.append(p)
+            for p in processes: p.join()
+            processes = [] # Clear chunk list
         
-        np.save(os.path.join(results_dir, f"final_test_preds_sub{args.test_subject}.npy"), {'preds': preds, 'true': true_labels})
+        print("\n" + "="*40)
+        print("AGGREGATING GLOBAL RESULTS FROM DISK...")
+        print("="*40 + "\n")
+        
+        all_preds = []
+        all_trues = []
+        subject_accuracies = {}
+        
+        root_res_dir = os.path.join("Results", model_name, f"Attempt_{run_id}_LOSO_Parallel")
+        
+        # Iterate over all subjects to load their saved .npy files
+        for sub_id in subject_list:
+            res_file = os.path.join(root_res_dir, f"Subject_{sub_id}", f"final_test_preds_sub{sub_id}.npy")
+            
+            if os.path.exists(res_file):
+                data = np.load(res_file, allow_pickle=True).item()
+                preds = data['preds']
+                trues = data['true']
+                acc = data['acc']
+                
+                subject_accuracies[sub_id] = acc
+                all_preds.extend(preds)
+                all_trues.extend(trues)
+                print(f"Loaded Subject {sub_id}: {acc:.2f}%")
+            else:
+                print(f"Warning: Results missing for Subject {sub_id}")
+                subject_accuracies[sub_id] = 0.0
+
+        # --- CALCULATE GLOBAL METRICS ---
+        all_preds = np.array(all_preds)
+        all_trues = np.array(all_trues)
+        
+        global_acc = np.mean(list(subject_accuracies.values()))
+        std_acc = np.std(list(subject_accuracies.values()))
+        
+        print(f"\n[LOSO COMPLETE] Mean Acc: {global_acc:.2f}% (+/- {std_acc:.2f}%)")
+        
+        # Generate Advanced Reports
+        class_names = ['Negative', 'Neutral', 'Positive']
+        cls_report = classification_report(all_trues, all_preds, target_names=class_names)
+        conf_matrix = confusion_matrix(all_trues, all_preds)
+
+        print("\nGlobal Classification Report:")
+        print(cls_report)
+        print("\nGlobal Confusion Matrix:")
+        print(conf_matrix)
+        
+        # Save Global Summary
+        with open(os.path.join(root_res_dir, "LOSO_Global_Summary.txt"), "w") as f:
+            f.write(f"Global LOSO Average: {global_acc:.2f}% (+/- {std_acc:.2f}%)\n")
+            f.write("-" * 30 + "\n")
+            f.write("Per Subject Accuracies:\n")
+            for sub, acc in subject_accuracies.items():
+                f.write(f"Subject {sub}: {acc:.2f}%\n")
+            f.write("\n" + "="*30 + "\n")
+            f.write("GLOBAL CLASSIFICATION REPORT:\n")
+            f.write(cls_report)
+            f.write("\n" + "="*30 + "\n")
+            f.write("GLOBAL CONFUSION MATRIX:\n")
+            f.write(str(conf_matrix))
+            
+        print(f"Global summary saved to {root_res_dir}")
+
+
+    else:
+        print("  -> Strategy: Session Holdout (Train on S1+S2, Test on S3)")
+        train_mask = (sessions == 1) | (sessions == 2)
+        test_mask = (sessions == 3)
+        
+        X_train, y_train = X_tensor[train_mask], y_tensor[train_mask]
+        X_test, y_test = X_tensor[test_mask], y_tensor[test_mask]
+        
+        train_loader = DataLoader(TensorDataset(X_train, y_train), 
+                                  batch_size=BATCH_SIZE, 
+                                  shuffle=True,
+                                  num_workers=8,      # <--- INCREASE THIS
+                                  pin_memory=True,    # <--- ENABLE THIS
+                                  persistent_workers=True)
+        test_loader = DataLoader(TensorDataset(X_test, y_test), 
+                                 batch_size=BATCH_SIZE, 
+                                 shuffle=False,
+                                 num_workers=8,      # <--- INCREASE THIS
+                                 pin_memory=True,    # <--- ENABLE THIS
+                                 persistent_workers=True)
+
+        run_name = f"Attempt_{run_id}_Phase2"
+        results_dir = os.path.join("Results", model_name, run_name)
+        params_dir = os.path.join("Params", model_name, run_name)
+        errors_dir = os.path.join("Errors", model_name, run_name)
+
+        os.makedirs(results_dir, exist_ok=True)
+        os.makedirs(params_dir, exist_ok=True)
+        os.makedirs(errors_dir, exist_ok=True)
+
+        # --- UPDATE: Input Features = 10 (Mean + Variance Features) ---
+        IN_FEATURES = 10
+        
+        if args.model_type == 'GCN':
+            print("Initializing Static GCN Model...")
+            model = GCN_DE_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=64, 
+                                num_classes=3, dropout_rate=0.5, num_layers=3).to(DEVICE)
+        elif args.model_type == 'DGCNN':
+            print("Initializing Dynamic DGCNN Model (Learnable Graph)...")
+            model = DGCNN_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=64, 
+                                num_classes=3, dropout_rate=0.5).to(DEVICE)
+        elif args.model_type == 'ADAPTIVE_DGCNN':
+            # This is the new model with var_B's Gatekeepers and var_C's Dynamic Brain
+            model = Adaptive_DGCNN(num_nodes=62, in_features=IN_FEATURES, num_classes=3).to(DEVICE)
+            print("Using Adaptive DGCNN (var_D) - The 83% Hybrid Architecture")
+
+        # --- UPDATED OPTIMIZER: STRONG REGULARIZATION FOR GAMMA ---
+        # We split parameters into "gamma" (needs strong regularization) and "rest".
+        
+        gamma_params = []
+        other_params = []
+        
+        for name, param in model.named_parameters():
+            if 'static_norm.gamma' in name:
+                gamma_params.append(param)
+            else:
+                other_params.append(param)
+                
+        optimizer = optim.Adam([
+            {'params': other_params, 'weight_decay': WEIGHT_DECAY}, # Normal L2
+            {'params': gamma_params, 'weight_decay': 1e-2}          # Strong L2 (force small weights)
+        ], lr=LEARNING_RATE)
+        
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', 
+                                                        factor=0.5, patience=PATIENCE)
+        
+        # --- STRATEGY: Class Weights ---
+        # Double penalty for Negative (Class 0) to fix Recall
+        class_weights = torch.tensor([1.2, 0.9, 1.0]).to(DEVICE)
+        criterion = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=0.1)
+
+        # --- CLEAN CALL TO MASTER TRAINING FUNCTION ---
+        train_model_with_interrupt(
+            model=model,
+            train_loader=train_loader,
+            test_loader=test_loader,
+            optimizer=optimizer,
+            criterion=criterion,
+            scheduler=scheduler,
+            epochs=EPOCHS,
+            device=DEVICE,
+            # patience=PATIENCE,
+            results_dir=results_dir,
+            params_dir=params_dir,
+            errors_dir=errors_dir,
+            base_edge_index=base_edge_index,
+            evaluate_fn=evaluate,
+            hyperparams=args,
+            in_features=IN_FEATURES  # Passing the critical 10 features argument
+        )        
+
 
 if __name__ == "__main__":
+    # REQUIRED for Windows and CUDA multiprocessing
+    mp.set_start_method('spawn', force=True)
     main()

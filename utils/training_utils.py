@@ -56,7 +56,8 @@ def train_epoch(model, loader, optimizer, criterion, device, base_edge_index, in
 
 
 # --- 2. Fixed Evaluate (Handles TypeError and return logic) ---
-def evaluate(model, loader, base_edge_index, criterion, device, in_features, return_preds=False, return_embeddings=False):
+def evaluate(model, loader, base_edge_index, criterion, device, in_features, 
+             return_preds=False, return_embeddings=False):
     model.eval()
     val_loss, correct, total = 0, 0, 0
     all_preds, all_labels, all_embeddings = [], [], []
@@ -232,7 +233,7 @@ class TrainingManager:
 # --- 3. The Master Loop (Restored & Updated) ---
 def train_model_with_interrupt(model, train_loader, test_loader, optimizer, 
                                criterion, scheduler, epochs, device, results_dir, 
-                               params_dir, errors_dir, base_edge_index, 
+                               params_dir, errors_dir, subject_tag, base_edge_index, 
                                evaluate_fn, hyperparams=None, in_features=5):
     """
     Orchestrates the full training process.
@@ -273,7 +274,7 @@ def train_model_with_interrupt(model, train_loader, test_loader, optimizer,
             lr_str = f"LR: {current_lr:.6f}"
             perf_str = f"Train Loss: {train_loss:.4f} Acc: {train_acc:.2f}% | Val Loss: {val_loss:.4f} Acc: {val_acc:.2f}%"
             
-            log_line = f"{epoch_str} {time_str} | {lr_str} | {perf_str}"
+            log_line = f"{subject_tag} {epoch_str} {time_str} | {lr_str} | {perf_str}"
             
             if improved:
                 # Add a visual indicator for new best models
@@ -299,7 +300,7 @@ def train_model_with_interrupt(model, train_loader, test_loader, optimizer,
     print("\nRunning Final Evaluation on Best Model...")
     model.load_state_dict(manager.best_model_wts)
     test_loss, test_acc, preds, true_labels = evaluate_fn(
-        model, test_loader, base_edge_index, criterion, device, in_features, return_preds=True
+        model, test_loader, base_edge_index, criterion, device, in_features, return_preds=True, return_embeddings=False
     )
     
     print(f"Final Test Loss: {test_loss:.4f} | Test Acc: {test_acc:.2f}%")
