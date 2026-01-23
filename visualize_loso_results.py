@@ -8,7 +8,7 @@ from sklearn.metrics import accuracy_score
 
 # --- CONFIGURATION ---
 MODEL_NAME = "GCN_DE_4s" 
-ATTEMPT_ID = "Attempt_56_LOSO_Parallel" 
+ATTEMPT_ID = "Attempt_54_LOSO_Parallel" 
 
 RESULTS_DIR = f"Results/{MODEL_NAME}/{ATTEMPT_ID}"
 PARAMS_DIR = f"Params/{MODEL_NAME}/{ATTEMPT_ID}"
@@ -197,7 +197,7 @@ def plot_brain_map(subject_id, band_idx=2): # 2 = Alpha
 # ==========================================
 if __name__ == "__main__":
     # Analyze a specific problematic subject
-    target_subjects = [3, 6, 10, 12] 
+    target_subjects = [1, 4, 6, 7, 8, 10, 11, 12, 13] 
 
     for sub in target_subjects:
         print(f"\n--- ANALYZING SUBJECT {sub} ---")
