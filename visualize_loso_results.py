@@ -9,7 +9,7 @@ from sklearn.metrics import accuracy_score
 
 # --- CONFIGURATION ---
 MODEL_NAME = "GCN_DE_4s" 
-ATTEMPT_ID = "Attempt_56_LOSO_Parallel" 
+ATTEMPT_ID = "Attempt_57_LOSO_Parallel" 
 
 RESULTS_DIR = f"Results/{MODEL_NAME}/{ATTEMPT_ID}"
 PARAMS_DIR = f"Params/{MODEL_NAME}/{ATTEMPT_ID}"

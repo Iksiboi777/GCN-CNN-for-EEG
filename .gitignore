@@ -34,6 +34,7 @@ Results/GCN_DE_4s/*
 !Results/GCN_DE_4s/Attempt_34*/
 !Results/GCN_DE_4s/Attempt_54*/
 !Results/GCN_DE_4s/Attempt_56*/
+!Results/GCN_DE_4s/Attempt_57*/
 
 # --- ADAPTIVE_DGCNN_DE_4s (Attempts 36-39) ---
 !Results/ADAPTIVE_DGCNN_DE_4s/
@@ -86,6 +87,7 @@ Errors/GCN_DE_4s/*
 !Errors/GCN_DE_4s/Attempt_34*/
 !Errors/GCN_DE_4s/Attempt_54*/
 !Errors/GCN_DE_4s/Attempt_56*/
+!Errors/GCN_DE_4s/Attempt_57*/
 
 
 # --- ADAPTIVE_DGCNN_DE_4s (Attempts 36-39) ---
