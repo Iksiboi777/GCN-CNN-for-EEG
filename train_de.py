@@ -24,11 +24,11 @@ import torch.multiprocessing as mp
 
 # --- Configuration ---
 LOCS_FILE = "utils/channel_62_pos.locs"
-BATCH_SIZE = 512
+BATCH_SIZE = 1024
 EPOCHS = 100
-LEARNING_RATE = 0.0008
-WEIGHT_DECAY = 1e-3 
-PATIENCE = 25
+LEARNING_RATE = 0.0004
+WEIGHT_DECAY = 5e-3 
+PATIENCE = 5
 # --- NEW: Sparsity Penalty for Adaptive Layer ---
 L1_LAMBDA = 1e-4  # Force gamma parameters towards zero
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -64,12 +64,12 @@ def get_args():
     parser = argparse.ArgumentParser(description="Train GCN-DE for EEG Emotion Recognition")
     parser.add_argument('--mode', type=str, default='sub_indep', choices=['sub_dep', 'sub_indep'],
                         help="Training mode: 'sub_dep' (Session split) or 'sub_indep' (LOSO)")
-    parser.add_argument('--window_size', type=str, default='4s', choices=['1s', '4s'],
+    parser.add_argument('--window_size', type=str, default='1s', choices=['1s', '4s'],
                         help="Feature window size: '1s' or '4s'")
     parser.add_argument('--model_type', type=str, default = 'GCN', 
                         choices=['GCN', 'DGCNN', 'ADAPTIVE_DGCNN'],
                         help="Type of GCN model to use")
-    parser.add_argument('--max_parallel', type=int, default=1, 
+    parser.add_argument('--max_parallel', type=int, default=4, 
                         help="Maximum number of parallel processes")
     return parser.parse_args()
 
@@ -273,11 +273,11 @@ def run_single_subject_fold(subject_id, args, X_full, y_full, sub_full,
 
     # 3. Model Initialization (Fresh weights, zero leakage)
     if args.model_type == 'GCN':
-        model = GCN_DE_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=128, 
-                             num_classes=3, dropout_rate=0.5, num_layers=2).to(local_device)
+        model = GCN_DE_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=64, 
+                             num_classes=3, dropout_rate=0.6, num_layers=2).to(local_device)
     elif args.model_type == 'DGCNN':
         model = DGCNN_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=64, 
-                            num_classes=3, dropout_rate=0.5).to(local_device)
+                            num_classes=3, dropout_rate=0.5, num_layers=2).to(local_device)
     elif args.model_type == 'ADAPTIVE_DGCNN':
         model = Adaptive_DGCNN(num_nodes=62, in_features=IN_FEATURES, num_classes=3).to(local_device)
 
@@ -306,13 +306,13 @@ def run_single_subject_fold(subject_id, args, X_full, y_full, sub_full,
     train_loader = DataLoader(TensorDataset(X_train, y_train), 
                                 batch_size=BATCH_SIZE, 
                                 shuffle=True,
-                                num_workers=8,      # <--- INCREASE THIS
+                                num_workers=2,      # <--- INCREASE THIS
                                 pin_memory=True,    # <--- ENABLE THIS
                                 persistent_workers=True)
     test_loader = DataLoader(TensorDataset(X_test, y_test), 
                                 batch_size=BATCH_SIZE, 
                                 shuffle=False,
-                                num_workers=8,      # <--- INCREASE THIS
+                                num_workers=2,      # <--- INCREASE THIS
                                 pin_memory=True,    # <--- ENABLE THIS
                                 persistent_workers=True)
 
@@ -373,7 +373,23 @@ def main():
                                      model_name))
                 p.start()
                 processes.append(p)
-            for p in processes: p.join()
+            
+            try:
+                for p in processes: p.join()
+            except KeyboardInterrupt:
+                print(f"\n\n{'!'*40}")
+                print(f"MAIN PROCESS INTERRUPTED ON CHUNK {chunk}")
+                print(f"Waiting for children to save state and exit...")
+                print(f"{'!'*40}\n")
+                
+                # Wait for children to finish their handle_interrupt() routines
+                for p in processes: 
+                    if p.is_alive(): p.join()
+                
+                print("\n>>> Moving to next subject chunk... (Press Ctrl+C again quickly to stop completely)")
+                processes = [] # Clear chunk list
+                continue 
+
             processes = [] # Clear chunk list
         
         print("\n" + "="*40)
@@ -408,36 +424,44 @@ def main():
         all_preds = np.array(all_preds)
         all_trues = np.array(all_trues)
         
-        global_acc = np.mean(list(subject_accuracies.values()))
-        std_acc = np.std(list(subject_accuracies.values()))
-        
-        print(f"\n[LOSO COMPLETE] Mean Acc: {global_acc:.2f}% (+/- {std_acc:.2f}%)")
-        
-        # Generate Advanced Reports
-        class_names = ['Negative', 'Neutral', 'Positive']
-        cls_report = classification_report(all_trues, all_preds, target_names=class_names)
-        conf_matrix = confusion_matrix(all_trues, all_preds)
-
-        print("\nGlobal Classification Report:")
-        print(cls_report)
-        print("\nGlobal Confusion Matrix:")
-        print(conf_matrix)
-        
-        # Save Global Summary
-        with open(os.path.join(root_res_dir, "LOSO_Global_Summary.txt"), "w") as f:
-            f.write(f"Global LOSO Average: {global_acc:.2f}% (+/- {std_acc:.2f}%)\n")
-            f.write("-" * 30 + "\n")
-            f.write("Per Subject Accuracies:\n")
-            for sub, acc in subject_accuracies.items():
-                f.write(f"Subject {sub}: {acc:.2f}%\n")
-            f.write("\n" + "="*30 + "\n")
-            f.write("GLOBAL CLASSIFICATION REPORT:\n")
-            f.write(cls_report)
-            f.write("\n" + "="*30 + "\n")
-            f.write("GLOBAL CONFUSION MATRIX:\n")
-            f.write(str(conf_matrix))
+        if len(all_preds) == 0:
+            print("\n[ERROR] No predictions were aggregated. Skipping report generation.")
+            print("Did the training processes finish and save their .npy files?")
+        else:
+            global_acc = np.mean(list(subject_accuracies.values()))
+            std_acc = np.std(list(subject_accuracies.values()))
             
-        print(f"Global summary saved to {root_res_dir}")
+            print(f"\n[LOSO COMPLETE] Mean Acc: {global_acc:.2f}% (+/- {std_acc:.2f}%)")
+            
+            # Generate Advanced Reports
+            class_names = ['Negative', 'Neutral', 'Positive']
+            
+            try:
+                cls_report = classification_report(all_trues, all_preds, target_names=class_names)
+                conf_matrix = confusion_matrix(all_trues, all_preds)
+
+                print("\nGlobal Classification Report:")
+                print(cls_report)
+                print("\nGlobal Confusion Matrix:")
+                print(conf_matrix)
+                
+                # Save Global Summary
+                with open(os.path.join(root_res_dir, "LOSO_Global_Summary.txt"), "w") as f:
+                    f.write(f"Global LOSO Average: {global_acc:.2f}% (+/- {std_acc:.2f}%)\n")
+                    f.write("-" * 30 + "\n")
+                    f.write("Per Subject Accuracies:\n")
+                    for sub, acc in subject_accuracies.items():
+                        f.write(f"Subject {sub}: {acc:.2f}%\n")
+                    f.write("\n" + "="*30 + "\n")
+                    f.write("GLOBAL CLASSIFICATION REPORT:\n")
+                    f.write(cls_report)
+                    f.write("\n" + "="*30 + "\n")
+                    f.write("GLOBAL CONFUSION MATRIX:\n")
+                    f.write(str(conf_matrix))
+                    
+                print(f"Global summary saved to {root_res_dir}")
+            except Exception as e:
+                print(f"Error generating report: {e}")
 
 
     else:
@@ -451,13 +475,13 @@ def main():
         train_loader = DataLoader(TensorDataset(X_train, y_train), 
                                   batch_size=BATCH_SIZE, 
                                   shuffle=True,
-                                  num_workers=8,      # <--- INCREASE THIS
+                                  num_workers=2,      # <--- INCREASE THIS
                                   pin_memory=True,    # <--- ENABLE THIS
                                   persistent_workers=True)
         test_loader = DataLoader(TensorDataset(X_test, y_test), 
                                  batch_size=BATCH_SIZE, 
                                  shuffle=False,
-                                 num_workers=8,      # <--- INCREASE THIS
+                                 num_workers=2,      # <--- INCREASE THIS
                                  pin_memory=True,    # <--- ENABLE THIS
                                  persistent_workers=True)
 

@@ -1,0 +1,16 @@
+Model: GCN_DE_Model
+              precision    recall  f1-score   support
+
+    Negative       0.79      0.87      0.83      3360
+     Neutral       0.88      0.90      0.89      3312
+    Positive       0.94      0.83      0.88      3510
+
+    accuracy                           0.87     10182
+   macro avg       0.87      0.87      0.87     10182
+weighted avg       0.87      0.87      0.87     10182
+
+
+Confusion Matrix:
+[[2934  317  109]
+ [ 268 2972   72]
+ [ 504   81 2925]]

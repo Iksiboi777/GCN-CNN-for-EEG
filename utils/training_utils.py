@@ -29,6 +29,7 @@ def train_epoch(model, loader, optimizer, criterion, device, base_edge_index, in
     
     for batch_X, batch_y in loader:
         batch_X, batch_y = batch_X.to(device), batch_y.to(device)
+        batch_X = batch_X + torch.randn_like(batch_X) * 0.01
         optimizer.zero_grad()
         
         if dense_mode:
@@ -279,30 +280,37 @@ def train_model_with_interrupt(model, train_loader, test_loader, optimizer,
             if improved:
                 # Add a visual indicator for new best models
                 log_line += f"  ★ BEST (Ep {epoch})"
-                # patience_counter = 0 
+                patience_counter = 0 
             else:
                 pass
-                # patience_counter += 1
+                patience_counter += 1
             
             print(log_line)
             
             # 5. Scheduler & Early Stopping
             scheduler.step(val_loss)
             
-            # if patience_counter >= 50:
-            #     print("Early stopping triggered.")
-            #     break
+            if patience_counter >= 25:
+                print("Early stopping triggered.")
+                break
                     
     except KeyboardInterrupt:
         manager.handle_interrupt()
 
     # --- Final Wrap-up ---
     print("\nRunning Final Evaluation on Best Model...")
-    model.load_state_dict(manager.best_model_wts)
-    test_loss, test_acc, preds, true_labels = evaluate_fn(
-        model, test_loader, base_edge_index, criterion, device, in_features, return_preds=True, return_embeddings=False
-    )
     
-    print(f"Final Test Loss: {test_loss:.4f} | Test Acc: {test_acc:.2f}%")
-    manager.save_final_results(preds, true_labels)
+    try:
+        model.load_state_dict(manager.best_model_wts)
+        test_loss, test_acc, preds, true_labels = evaluate_fn(
+            model, test_loader, base_edge_index, criterion, device, in_features, return_preds=True, return_embeddings=False
+        )
+        
+        print(f"Final Test Loss: {test_loss:.4f} | Test Acc: {test_acc:.2f}%")
+        manager.save_final_results(preds, true_labels)
+    except Exception as e:
+        print(f"\n[WARNING] Could not run final evaluation (Workers likely dead): {e}")
+        print("Saving best model weights manually...")
+        torch.save(manager.best_model_wts, os.path.join(manager.params_dir, "best_model_rescue.pth"))
+    
     print(f"Total Time: {time.time() - start_time:.2f}s")
