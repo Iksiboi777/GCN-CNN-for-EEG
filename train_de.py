@@ -24,7 +24,7 @@ import torch.multiprocessing as mp
 
 # --- Configuration ---
 LOCS_FILE = "utils/channel_62_pos.locs"
-BATCH_SIZE = 1024
+BATCH_SIZE = 512
 EPOCHS = 100
 LEARNING_RATE = 0.0004
 WEIGHT_DECAY = 5e-3 
@@ -273,7 +273,7 @@ def run_single_subject_fold(subject_id, args, X_full, y_full, sub_full,
 
     # 3. Model Initialization (Fresh weights, zero leakage)
     if args.model_type == 'GCN':
-        model = GCN_DE_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=64, 
+        model = GCN_DE_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=128, 
                              num_classes=3, dropout_rate=0.6, num_layers=2).to(local_device)
     elif args.model_type == 'DGCNN':
         model = DGCNN_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=64, 
@@ -290,8 +290,9 @@ def run_single_subject_fold(subject_id, args, X_full, y_full, sub_full,
         {'params': gamma_params, 'weight_decay': 1e-2} 
     ], lr=LEARNING_RATE)
 
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=PATIENCE)
-    criterion = nn.CrossEntropyLoss(weight=torch.tensor([1.2, 0.9, 1.0]).to(local_device), label_smoothing=0.1)
+    # scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=PATIENCE)
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS, eta_min=1e-6)
+    criterion = nn.CrossEntropyLoss(weight=torch.tensor([1.5, 1.2, 0.8]).to(local_device), label_smoothing=0.1)
 
     # 5. Directory Setup
     run_name = f"Attempt_{run_id}_LOSO_Parallel"

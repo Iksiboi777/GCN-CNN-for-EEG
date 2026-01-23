@@ -288,7 +288,7 @@ def train_model_with_interrupt(model, train_loader, test_loader, optimizer,
             print(log_line)
             
             # 5. Scheduler & Early Stopping
-            scheduler.step(val_loss)
+            scheduler.step()
             
             if patience_counter >= 25:
                 print("Early stopping triggered.")
