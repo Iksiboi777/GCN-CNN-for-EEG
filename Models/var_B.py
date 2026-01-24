@@ -161,9 +161,80 @@ class SEBlock(nn.Module):
         # 3. Scale
         return x * w[batch_index]
 
+# class GCN_DE_Model(nn.Module):
+#     def __init__(self, num_nodes=62, in_features=10, hidden_dim=64, 
+#                  num_classes=3, dropout_rate=0.5, num_layers=3):
+#         super(GCN_DE_Model, self).__init__()
+        
+#         # 1. Static Adaptation (Silencing Bad Sensors)
+#         self.static_norm = AdaptiveGraphInputLayer(num_nodes, in_features)
+        
+#         # 2. Dynamic Adaptation (Focusing on Good Bands)
+#         self.se_block = SEBlock(in_features, reduction=2)
+        
+#         # 3. GCN Layers
+#         self.layers = nn.ModuleList()
+#         self.bns = nn.ModuleList()
+#         self.dropout_rate = dropout_rate
+        
+#         self.layers.append(GCNConv(in_features, hidden_dim))
+#         self.bns.append(nn.BatchNorm1d(hidden_dim))
+        
+#         for _ in range(num_layers - 1):
+#             self.layers.append(GCNConv(hidden_dim, hidden_dim))
+#             self.bns.append(nn.BatchNorm1d(hidden_dim))
+            
+#         # 4. Final Pooling: Also Attention-based
+#         # We use a separate attention gate for the final classification
+#         gate_nn_final = nn.Sequential(nn.Linear(hidden_dim, 1), nn.Sigmoid())
+#         self.final_pool = GlobalAttention(gate_nn_final)
+        
+#         self.fc = nn.Linear(hidden_dim, num_classes)
+#         self.dropout = nn.Dropout(dropout_rate)
+
+#     def forward(self, x, edge_index, batch_index, return_embedding=False, return_attention=False):
+#         # 1. Preprocessing
+#         x = self.static_norm(x)
+#         x = self.se_block(x, batch_index)
+        
+#         # 2. Convolution
+#         for i, (conv, bn) in enumerate(zip(self.layers, self.bns)):
+#             x = conv(x, edge_index)
+#             x = bn(x)
+#             x = F.relu(x)
+#             if i < len(self.layers) - 1:
+#                 x = self.dropout(x)
+        
+#         # 3. Aggregation (Replaced MeanPool with AttPool)
+
+#         # --- NEW BLOCK: EXTRACT ATTENTION WEIGHTS ---
+#         if return_attention:
+#             # We manually pass x through the gating network associated with the final pool
+#             # x shape: (TotalNodesInBatch, HiddenDim)
+#             # gate_nn output: (TotalNodesInBatch, 1) -> The "Importance" score (0 to 1)
+#             attention_logits = self.final_pool.gate_nn(x)
+#             attention_weights = attention_logits.squeeze() # Shape: (TotalNodesInBatch)
+            
+#             # Continue with normal pooling
+#             embedding = self.final_pool(x, batch_index)
+#             out = self.fc(embedding)
+#             return out, attention_weights
+#         embedding = self.final_pool(x, batch_index)
+        
+#         # 4. Classification
+#         out = self.fc(embedding)
+        
+#         if return_embedding:
+#             return out, embedding
+#         return out
+    
+
+
+# ADAPTIVE SUBJECT BIAS MODEL
+
 class GCN_DE_Model(nn.Module):
     def __init__(self, num_nodes=62, in_features=10, hidden_dim=64, 
-                 num_classes=3, dropout_rate=0.5, num_layers=3):
+                 num_classes=3, dropout_rate=0.5, num_layers=3, num_subjects=15): # Added num_subjects
         super(GCN_DE_Model, self).__init__()
         
         # 1. Static Adaptation (Silencing Bad Sensors)
@@ -185,14 +256,19 @@ class GCN_DE_Model(nn.Module):
             self.bns.append(nn.BatchNorm1d(hidden_dim))
             
         # 4. Final Pooling: Also Attention-based
-        # We use a separate attention gate for the final classification
         gate_nn_final = nn.Sequential(nn.Linear(hidden_dim, 1), nn.Sigmoid())
         self.final_pool = GlobalAttention(gate_nn_final)
         
         self.fc = nn.Linear(hidden_dim, num_classes)
+        
+        # --- NEW: SUBJECT BIAS ---
+        self.subject_bias = nn.Embedding(num_subjects + 1, num_classes)
+        self.subject_bias.weight.data.fill_(0.0) # Init to zero
+        # -------------------------
+
         self.dropout = nn.Dropout(dropout_rate)
 
-    def forward(self, x, edge_index, batch_index, return_embedding=False, return_attention=False):
+    def forward(self, x, edge_index, batch_index, subject_ids=None, return_embedding=False, return_attention=False):
         # 1. Preprocessing
         x = self.static_norm(x)
         x = self.se_block(x, batch_index)
@@ -206,24 +282,29 @@ class GCN_DE_Model(nn.Module):
                 x = self.dropout(x)
         
         # 3. Aggregation (Replaced MeanPool with AttPool)
-
-        # --- NEW BLOCK: EXTRACT ATTENTION WEIGHTS ---
         if return_attention:
-            # We manually pass x through the gating network associated with the final pool
-            # x shape: (TotalNodesInBatch, HiddenDim)
-            # gate_nn output: (TotalNodesInBatch, 1) -> The "Importance" score (0 to 1)
             attention_logits = self.final_pool.gate_nn(x)
-            attention_weights = attention_logits.squeeze() # Shape: (TotalNodesInBatch)
-            
-            # Continue with normal pooling
+            attention_weights = attention_logits.squeeze() 
             embedding = self.final_pool(x, batch_index)
-            out = self.fc(embedding)
-            return out, attention_weights
+            logits = self.fc(embedding)
+            
+            # --- NEW: APPLY BIAS ---
+            if subject_ids is not None:
+                logits = logits + self.subject_bias(subject_ids)
+            # -----------------------
+
+            return logits, attention_weights
+            
         embedding = self.final_pool(x, batch_index)
         
         # 4. Classification
-        out = self.fc(embedding)
+        logits = self.fc(embedding)
+
+        # --- NEW: APPLY BIAS ---
+        if subject_ids is not None:
+            logits = logits + self.subject_bias(subject_ids)
+        # -----------------------
         
         if return_embedding:
-            return out, embedding
-        return out
+            return logits, embedding
+        return logits

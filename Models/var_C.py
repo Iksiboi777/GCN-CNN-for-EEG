@@ -277,6 +277,107 @@
 
 
 
+# import torch
+# import torch.nn as nn
+# import torch.nn.functional as F
+# from torch_geometric.nn import DenseGCNConv
+
+# class DGCNN_Model(nn.Module):
+#     """
+#     DGCNN with Input-Dependent Feature Attention.
+#     1. Feature Attention: Reweights the 10 input features (5 Mean + 5 Var) dynamically.
+#     2. Dynamic Graph: Learns the graph structure per sample.
+#     """
+#     def __init__(self, num_nodes=62, in_features=10, hidden_dim=64, num_classes=3, dropout_rate=0.5):
+#         super(DGCNN_Model, self).__init__()
+        
+#         self.num_nodes = num_nodes
+#         self.hidden_dim = hidden_dim
+        
+#         # --- 1. Feature Attention Layer (SE-Block style) ---
+#         # Input: (Batch, Nodes, in_features) -> Global Pool -> (Batch, in_features)
+#         # We want to reweight the features dynamically per sample
+#         self.feature_fc1 = nn.Linear(in_features, 16)
+#         self.feature_fc2 = nn.Linear(16, in_features)
+        
+#         # --- 2. Dynamic Graph Layers ---
+#         # Transforms input to Hidden Dim for Graph Construction
+#         self.weight_q = nn.Linear(in_features, hidden_dim)
+#         self.weight_k = nn.Linear(in_features, hidden_dim)
+        
+#         # GCN Layers
+#         self.conv1 = DenseGCNConv(in_features, hidden_dim)
+#         self.conv2 = DenseGCNConv(hidden_dim, hidden_dim)
+        
+#         # Batch Norms (1D because we treat nodes as a sequence)
+#         self.bn1 = nn.BatchNorm1d(hidden_dim)
+#         self.bn2 = nn.BatchNorm1d(hidden_dim)
+        
+#         self.fc = nn.Linear(hidden_dim, num_classes)
+#         self.dropout = nn.Dropout(dropout_rate)
+
+#     def forward(self, x, edge_index, batch_index, return_embedding=False):
+#         # x: (Batch * Nodes, in_features)
+        
+#         # 1. Reshape: (Batch, Nodes, in_features)
+#         batch_size = x.size(0) // self.num_nodes
+#         x = x.view(batch_size, self.num_nodes, -1)
+        
+#         # --- Feature Attention ---
+#         # Global Average Pooling over Nodes: (Batch, in_features)
+#         # We want to know which features (Bands/Variance) are active in the *whole brain*
+#         global_features = torch.mean(x, dim=1) 
+        
+#         # Excitation: Learn weights
+#         w = F.relu(self.feature_fc1(global_features))
+#         w = torch.sigmoid(self.feature_fc2(w)) # Weights in [0, 1]
+        
+#         # Apply weights: (Batch, Nodes, in_features) * (Batch, 1, in_features)
+#         x = x * w.unsqueeze(1)
+        
+#         # --- Dynamic Graph Construction ---
+#         # Q, K: (Batch, Nodes, Hidden)
+#         Q = self.weight_q(x)
+#         K = self.weight_k(x)
+        
+#         # Attention / Similarity: (Batch, Nodes, Nodes)
+#         A = torch.bmm(Q, K.transpose(1, 2))
+#         # Softmax to create a probability distribution for edges
+#         A = F.softmax(A / (self.hidden_dim ** 0.5), dim=-1)
+        
+#         # --- GCN Layers ---
+#         x = self.conv1(x, A)
+#         x = x.permute(0, 2, 1) # (Batch, Hidden, Nodes) for BatchNorm
+#         x = self.bn1(x)
+#         x = F.relu(x)
+#         x = x.permute(0, 2, 1) # Back to (Batch, Nodes, Hidden)
+#         x = self.dropout(x)
+        
+#         x = self.conv2(x, A)
+#         x = x.permute(0, 2, 1)
+#         x = self.bn2(x)
+#         x = F.relu(x)
+#         x = x.permute(0, 2, 1)
+#         x = self.dropout(x)
+        
+#         # Global Pooling
+#         embedding = torch.mean(x, dim=1)
+        
+#         # Classification
+#         out = self.fc(embedding)
+
+#         if return_embedding:
+#             return out, embedding
+#         return out
+    
+
+
+
+
+
+# ADAPTIVE SUBJECT BIAS MODEL
+
+# ...existing imports...
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -285,23 +386,19 @@ from torch_geometric.nn import DenseGCNConv
 class DGCNN_Model(nn.Module):
     """
     DGCNN with Input-Dependent Feature Attention.
-    1. Feature Attention: Reweights the 10 input features (5 Mean + 5 Var) dynamically.
-    2. Dynamic Graph: Learns the graph structure per sample.
     """
-    def __init__(self, num_nodes=62, in_features=10, hidden_dim=64, num_classes=3, dropout_rate=0.5):
+    def __init__(self, num_nodes=62, in_features=10, hidden_dim=64, 
+                 num_classes=3, dropout_rate=0.5, num_subjects=15): # Added num_subjects
         super(DGCNN_Model, self).__init__()
         
         self.num_nodes = num_nodes
         self.hidden_dim = hidden_dim
         
         # --- 1. Feature Attention Layer (SE-Block style) ---
-        # Input: (Batch, Nodes, in_features) -> Global Pool -> (Batch, in_features)
-        # We want to reweight the features dynamically per sample
         self.feature_fc1 = nn.Linear(in_features, 16)
         self.feature_fc2 = nn.Linear(16, in_features)
         
         # --- 2. Dynamic Graph Layers ---
-        # Transforms input to Hidden Dim for Graph Construction
         self.weight_q = nn.Linear(in_features, hidden_dim)
         self.weight_k = nn.Linear(in_features, hidden_dim)
         
@@ -309,14 +406,20 @@ class DGCNN_Model(nn.Module):
         self.conv1 = DenseGCNConv(in_features, hidden_dim)
         self.conv2 = DenseGCNConv(hidden_dim, hidden_dim)
         
-        # Batch Norms (1D because we treat nodes as a sequence)
+        # Batch Norms
         self.bn1 = nn.BatchNorm1d(hidden_dim)
         self.bn2 = nn.BatchNorm1d(hidden_dim)
         
         self.fc = nn.Linear(hidden_dim, num_classes)
+        
+        # --- NEW: SUBJECT BIAS ---
+        self.subject_bias = nn.Embedding(num_subjects + 1, num_classes)
+        self.subject_bias.weight.data.fill_(0.0)
+        # -------------------------
+        
         self.dropout = nn.Dropout(dropout_rate)
 
-    def forward(self, x, edge_index, batch_index, return_embedding=False):
+    def forward(self, x, edge_index, batch_index, subject_ids=None, return_embedding=False): # Added subject_ids
         # x: (Batch * Nodes, in_features)
         
         # 1. Reshape: (Batch, Nodes, in_features)
@@ -324,33 +427,23 @@ class DGCNN_Model(nn.Module):
         x = x.view(batch_size, self.num_nodes, -1)
         
         # --- Feature Attention ---
-        # Global Average Pooling over Nodes: (Batch, in_features)
-        # We want to know which features (Bands/Variance) are active in the *whole brain*
         global_features = torch.mean(x, dim=1) 
-        
-        # Excitation: Learn weights
         w = F.relu(self.feature_fc1(global_features))
-        w = torch.sigmoid(self.feature_fc2(w)) # Weights in [0, 1]
-        
-        # Apply weights: (Batch, Nodes, in_features) * (Batch, 1, in_features)
+        w = torch.sigmoid(self.feature_fc2(w)) 
         x = x * w.unsqueeze(1)
         
         # --- Dynamic Graph Construction ---
-        # Q, K: (Batch, Nodes, Hidden)
         Q = self.weight_q(x)
         K = self.weight_k(x)
-        
-        # Attention / Similarity: (Batch, Nodes, Nodes)
         A = torch.bmm(Q, K.transpose(1, 2))
-        # Softmax to create a probability distribution for edges
         A = F.softmax(A / (self.hidden_dim ** 0.5), dim=-1)
         
         # --- GCN Layers ---
         x = self.conv1(x, A)
-        x = x.permute(0, 2, 1) # (Batch, Hidden, Nodes) for BatchNorm
+        x = x.permute(0, 2, 1) 
         x = self.bn1(x)
         x = F.relu(x)
-        x = x.permute(0, 2, 1) # Back to (Batch, Nodes, Hidden)
+        x = x.permute(0, 2, 1) 
         x = self.dropout(x)
         
         x = self.conv2(x, A)
@@ -364,8 +457,13 @@ class DGCNN_Model(nn.Module):
         embedding = torch.mean(x, dim=1)
         
         # Classification
-        out = self.fc(embedding)
+        logits = self.fc(embedding)
+
+        # --- NEW: APPLY BIAS ---
+        if subject_ids is not None:
+             logits = logits + self.subject_bias(subject_ids)
+        # -----------------------
 
         if return_embedding:
-            return out, embedding
-        return out
+            return logits, embedding
+        return logits

@@ -27,14 +27,23 @@ def train_epoch(model, loader, optimizer, criterion, device, base_edge_index, in
     
     dense_mode = is_dense_model(model)
     
-    for batch_X, batch_y in loader:
+    for batch in loader:
+        # Handle unpacking dynamically (Data, Label) vs (Data, Label, Subject)
+        if len(batch) == 3:
+            batch_X, batch_y, batch_sub = batch
+            batch_sub = batch_sub.to(device)
+        else:
+            batch_X, batch_y = batch
+            batch_sub = None
+            
         batch_X, batch_y = batch_X.to(device), batch_y.to(device)
         batch_X = batch_X + torch.randn_like(batch_X) * 0.01
+        
         optimizer.zero_grad()
         
         if dense_mode:
-            # Pathway for DGCNN / Adaptive Models
-            outputs = model(batch_X)
+            # Pass subject IDs to the model if available
+            outputs = model(batch_X, subject_ids=batch_sub)
         else:
             # Pathway for Sparse GCN (Flattening + Edge Index Offsetting)
             curr_batch_size = batch_X.size(0)
@@ -67,7 +76,14 @@ def evaluate(model, loader, base_edge_index, criterion, device, in_features,
     can_embed = supports_embeddings(model)
 
     with torch.no_grad():
-        for batch_X, batch_y in loader:
+        for batch in loader:
+            if len(batch) == 3:
+                batch_X, batch_y, batch_sub = batch
+                batch_sub = batch_sub.to(device)
+            else:
+                batch_X, batch_y = batch
+                batch_sub = None
+            
             batch_X, batch_y = batch_X.to(device), batch_y.to(device)
             
             # Preparation for Sparse models
@@ -81,7 +97,8 @@ def evaluate(model, loader, base_edge_index, criterion, device, in_features,
             # Forward Pass Logic
             if return_embeddings and can_embed:
                 if dense_mode:
-                    outputs, embeddings = model(batch_X, return_embedding=True)
+                    outputs, embeddings = model(batch_X, subject_id = batch_sub, 
+                                                return_embedding=True)
                 else:
                     outputs, embeddings = model(batch_X_flat, edge_index, batch_idx, return_embedding=True)
                 all_embeddings.extend(embeddings.cpu().numpy())
@@ -290,7 +307,7 @@ def train_model_with_interrupt(model, train_loader, test_loader, optimizer,
             # 5. Scheduler & Early Stopping
             scheduler.step()
             
-            if patience_counter >= 25:
+            if patience_counter >= 40:
                 print("Early stopping triggered.")
                 break
                     

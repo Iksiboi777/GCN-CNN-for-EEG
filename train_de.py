@@ -18,6 +18,7 @@ from Models.graph_construction import get_knn_adjacency_matrix
 from utils.training_utils import train_model_with_interrupt, evaluate
 from utils.feature_engineering import SmartPreprocessor, get_standard_channel_names
 # from sklearn.preprocessing import RobustScaler # REMOVED to match Attempt 18
+from utils.focal_loss import FocalLoss
 
 import torch.multiprocessing as mp
 
@@ -34,8 +35,6 @@ L1_LAMBDA = 1e-4  # Force gamma parameters towards zero
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 CONFIG_FILE = "run_config.json"
 
-# --- STRATEGY CONFIGURATION ---
-HARD_SUBJECTS = [2, 7, 12, 13] # Subjects with systemic artifacts/sinkholes
 ROLLING_VAR_WINDOW = 9      # Window size for generating variance features
 
 
@@ -88,6 +87,34 @@ def compute_rolling_variance(data, window_size=ROLLING_VAR_WINDOW):
         vars_list.append(np.var(slice_data, axis=1))
         
     return np.stack(vars_list, axis=1)
+
+
+def compute_frontal_alpha_asymmetry(data, channel_names):
+    """
+    Computes FAS = ln(Right Alpha) - ln(Left Alpha)
+    Specifically using F4 (Right) and F3 (Left) Alpha band (index 2).
+    Input Data: (62, Samples, Bands)
+    Output: (1, Samples, 1) -> Broadcastable Feature
+    """
+    if 'F4' not in channel_names or 'F3' not in channel_names:
+        # Fallback if specific channels missing, return zeros
+        return np.zeros((1, data.shape[1], 1))
+        
+    f4_idx = channel_names.index('F4')
+    f3_idx = channel_names.index('F3')
+    
+    # Alpha band is index 2 (Delta, Theta, Alpha, Beta, Gamma)
+    # We use a small epsilon for log stability
+    alpha_right = data[f4_idx, :, 2] + 1e-6
+    alpha_left  = data[f3_idx, :, 2] + 1e-6
+    
+    # Formula: ln(Right) - ln(Left)
+    fas = np.log(alpha_right) - np.log(alpha_left)
+    
+    # Reshape to (1, Samples, 1) to match dimensionality requirements for concatenation
+    # We pretend this is a "global" feature for the whole brain or broadcast it
+    fas = fas.reshape(1, -1, 1) 
+    return fas
 
 
 def load_de_data(data_folder, label_file):
@@ -175,14 +202,21 @@ def load_de_data(data_folder, label_file):
                 #         data[cf2_idx, :, :] = (data[idx1, :, :] + data[idx2, :, :] + data[idx3, :, :]) / 3
                 # -----------------------------------------------------------
 
-                # --- RESTORED: Variance Calculation ---
-                # Compute rolling variance (Strategy V2)
+                # --- 1. Compute Rolling Variance (Feature 6-10) ---
                 data_var = compute_rolling_variance(data, window_size=ROLLING_VAR_WINDOW)
                 
-                # # Stack: (62, samples, 5) + (62, samples, 5) -> (62, samples, 10)
-                data_combined = np.concatenate([data, data_var], axis=2)
+                # --- 2. Compute Frontal Alpha Asymmetry (Feature 11) ---
+                # Returns (1, Samples, 1)
+                fas_feature = compute_frontal_alpha_asymmetry(data, channel_names)
+                # Broadcast FAS to all 62 nodes: (62, Samples, 1)
+                fas_feature = np.repeat(fas_feature, 62, axis=0)
 
-                # # Transpose to (samples, 62, 10) for storage/model input
+                # --- 3. Stack All Features ---
+                # Data: (62, S, 5) | Var: (62, S, 5) | FAS: (62, S, 1)
+                # Total Features = 11
+                data_combined = np.concatenate([data, data_var, fas_feature], axis=2)
+
+                # Transpose to (samples, 62, 11) for storage/model input
                 data_combined = np.transpose(data_combined, (1, 0, 2))
 
 
@@ -269,7 +303,7 @@ def run_single_subject_fold(subject_id, args, X_full, y_full, sub_full,
     X_train, y_train = X_full[~test_mask], y_full[~test_mask]
     X_test, y_test = X_full[test_mask], y_full[test_mask]
 
-    IN_FEATURES = 10
+    IN_FEATURES = 11
 
     # 3. Model Initialization (Fresh weights, zero leakage)
     if args.model_type == 'GCN':
@@ -279,7 +313,8 @@ def run_single_subject_fold(subject_id, args, X_full, y_full, sub_full,
         model = DGCNN_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=64, 
                             num_classes=3, dropout_rate=0.5, num_layers=2).to(local_device)
     elif args.model_type == 'ADAPTIVE_DGCNN':
-        model = Adaptive_DGCNN(num_nodes=62, in_features=IN_FEATURES, num_classes=3).to(local_device)
+        model = Adaptive_DGCNN(num_nodes=62, in_features=IN_FEATURES, num_classes=3,
+                               dropout_rate=0.5, num_layers=3).to(local_device)
 
     # 4. Optimizer Setup (Split for Gamma regularization)
     gamma_params = [p for n, p in model.named_parameters() if 'static_norm.gamma' in n]
@@ -292,7 +327,10 @@ def run_single_subject_fold(subject_id, args, X_full, y_full, sub_full,
 
     # scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=PATIENCE)
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS, eta_min=1e-6)
-    criterion = nn.CrossEntropyLoss(weight=torch.tensor([1.5, 1.2, 0.8]).to(local_device), label_smoothing=0.1)
+    # Alpha weights prioritize Negative (Class 0) and Neutral (Class 1) slightly over Positive
+    alpha_weights = torch.tensor([1.2, 1.1, 0.9]).to(local_device)
+    criterion = FocalLoss(alpha=alpha_weights, gamma=2.0)
+    # criterion = nn.CrossEntropyLoss(weight=torch.tensor([1.5, 1.2, 0.8]).to(local_device), label_smoothing=0.1)
 
     # 5. Directory Setup
     run_name = f"Attempt_{run_id}_LOSO_Parallel"
@@ -304,13 +342,18 @@ def run_single_subject_fold(subject_id, args, X_full, y_full, sub_full,
     os.makedirs(params_dir, exist_ok=True)
     os.makedirs(errors_dir, exist_ok=True)
 
-    train_loader = DataLoader(TensorDataset(X_train, y_train), 
+
+    # Filter subject tensors for split
+    sub_train = sub_full[~test_mask]
+    sub_test = sub_full[test_mask]
+
+    train_loader = DataLoader(TensorDataset(X_train, y_train, sub_train), 
                                 batch_size=BATCH_SIZE, 
                                 shuffle=True,
                                 num_workers=2,      # <--- INCREASE THIS
                                 pin_memory=True,    # <--- ENABLE THIS
                                 persistent_workers=True)
-    test_loader = DataLoader(TensorDataset(X_test, y_test), 
+    test_loader = DataLoader(TensorDataset(X_test, y_test, sub_test), 
                                 batch_size=BATCH_SIZE, 
                                 shuffle=False,
                                 num_workers=2,      # <--- INCREASE THIS
