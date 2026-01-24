@@ -44,6 +44,8 @@ Results/ADAPTIVE_DGCNN_DE_4s/*
 !Results/ADAPTIVE_DGCNN_DE_4s/Attempt_37*/
 !Results/ADAPTIVE_DGCNN_DE_4s/Attempt_38*/
 !Results/ADAPTIVE_DGCNN_DE_4s/Attempt_39*/
+!Results/ADAPTIVE_DGCNN_DE_4s/Attempt_63*/
+!Results/ADAPTIVE_DGCNN_DE_4s/Attempt_64*/
 
 # --- ADAPTIVE_DGCNN_DE_1s (Attempts 50-53, 58) ---
 !Results/ADAPTIVE_DGCNN_DE_1s/
@@ -98,6 +100,8 @@ Errors/ADAPTIVE_DGCNN_DE_4s/*
 !Errors/ADAPTIVE_DGCNN_DE_4s/Attempt_37*/
 !Errors/ADAPTIVE_DGCNN_DE_4s/Attempt_38*/
 !Errors/ADAPTIVE_DGCNN_DE_4s/Attempt_39*/
+!Errors/ADAPTIVE_DGCNN_DE_4s/Attempt_63*/
+!Errors/ADAPTIVE_DGCNN_DE_4s/Attempt_64*/
 
 # --- ADAPTIVE_DGCNN_DE_1s (Attempts 50-53) ---
 !Errors/ADAPTIVE_DGCNN_DE_1s/
