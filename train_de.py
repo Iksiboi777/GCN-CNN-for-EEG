@@ -65,7 +65,7 @@ def get_args():
                         help="Training mode: 'sub_dep' (Session split) or 'sub_indep' (LOSO)")
     parser.add_argument('--window_size', type=str, default='4s', choices=['1s', '4s'],
                         help="Feature window size: '1s' or '4s'")
-    parser.add_argument('--model_type', type=str, default = 'GCN', 
+    parser.add_argument('--model_type', type=str, default = 'ADAPTIVE_DGCNN', 
                         choices=['GCN', 'DGCNN', 'ADAPTIVE_DGCNN'],
                         help="Type of GCN model to use")
     parser.add_argument('--max_parallel', type=int, default=4, 
@@ -310,11 +310,11 @@ def run_single_subject_fold(subject_id, args, X_full, y_full, sub_full,
         model = GCN_DE_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=128, 
                              num_classes=3, dropout_rate=0.6, num_layers=2).to(local_device)
     elif args.model_type == 'DGCNN':
-        model = DGCNN_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=64, 
-                            num_classes=3, dropout_rate=0.5, num_layers=2).to(local_device)
+        model = DGCNN_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=128, 
+                            num_classes=3, dropout_rate=0.6, num_layers=2).to(local_device)
     elif args.model_type == 'ADAPTIVE_DGCNN':
-        model = Adaptive_DGCNN(num_nodes=62, in_features=IN_FEATURES, num_classes=3,
-                               dropout_rate=0.5, num_layers=3).to(local_device)
+        model = Adaptive_DGCNN(num_nodes=62, in_features=IN_FEATURES, num_classes=3, hidden_dim=128,
+                               dropout_rate=0.6, num_layers=2).to(local_device)
 
     # 4. Optimizer Setup (Split for Gamma regularization)
     gamma_params = [p for n, p in model.named_parameters() if 'static_norm.gamma' in n]
