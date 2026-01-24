@@ -9,7 +9,7 @@ from sklearn.metrics import accuracy_score
 
 # --- CONFIGURATION ---
 MODEL_NAME = "GCN_DE_4s" 
-ATTEMPT_ID = "Attempt_57_LOSO_Parallel" 
+ATTEMPT_ID = "Attempt_60_LOSO_Parallel" 
 
 RESULTS_DIR = f"Results/{MODEL_NAME}/{ATTEMPT_ID}"
 PARAMS_DIR = f"Params/{MODEL_NAME}/{ATTEMPT_ID}"
@@ -164,7 +164,7 @@ def plot_brain_map_ax(subject_id, ax, band_idx=2):
 # MAIN EXECUTION
 # ==========================================
 if __name__ == "__main__":
-    target_subjects = [4, 5, 6, 7, 8, 10, 11, 12, 13] 
+    target_subjects = [1, 4, 6, 7, 10, 12, 13] 
     
     # Calculate Grid Size
     num_plots = len(target_subjects)
