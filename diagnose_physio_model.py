@@ -18,7 +18,7 @@ DATA_ROOT = os.path.join(PROJECT_ROOT, "Data", "ExtractedFeatures_4s")
 LABEL_FILE = os.path.join(DATA_ROOT, "label.mat")
 
 # Subjects to analyze
-SUBJECTS_TO_ANALYZE = [1, 4, 6, 7, 10, 12, 13]
+SUBJECTS_TO_ANALYZE = [2, 11, 14]
 
 PARAMS_DIR = os.path.join(PROJECT_ROOT, "Params", MODEL_NAME, ATTEMPT_ID)
 RESULTS_DIR = os.path.join(PROJECT_ROOT, "Results", MODEL_NAME, ATTEMPT_ID)

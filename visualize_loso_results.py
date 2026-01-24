@@ -164,7 +164,7 @@ def plot_brain_map_ax(subject_id, ax, band_idx=2):
 # MAIN EXECUTION
 # ==========================================
 if __name__ == "__main__":
-    target_subjects = [1, 4, 6, 7, 10, 12, 13] 
+    target_subjects = [2, 11, 14] 
     
     # Calculate Grid Size
     num_plots = len(target_subjects)
