@@ -63,13 +63,15 @@ def get_args():
     parser = argparse.ArgumentParser(description="Train GCN-DE for EEG Emotion Recognition")
     parser.add_argument('--mode', type=str, default='sub_indep', choices=['sub_dep', 'sub_indep'],
                         help="Training mode: 'sub_dep' (Session split) or 'sub_indep' (LOSO)")
-    parser.add_argument('--window_size', type=str, default='4s', choices=['1s', '4s'],
+    parser.add_argument('--window_size', type=str, default='2s', choices=['1s', '4s', '2s'],
                         help="Feature window size: '1s' or '4s'")
-    parser.add_argument('--model_type', type=str, default = 'ADAPTIVE_DGCNN', 
+    parser.add_argument('--model_type', type=str, default = 'GCN', 
                         choices=['GCN', 'DGCNN', 'ADAPTIVE_DGCNN'],
                         help="Type of GCN model to use")
     parser.add_argument('--max_parallel', type=int, default=4, 
                         help="Maximum number of parallel processes")
+    parser.add_argument('--use_overlap_logic', type=bool, default=True,
+                        help="Whether to use overlap logic in GCN_DE_Model")
     return parser.parse_args()
 
 def compute_rolling_variance(data, window_size=ROLLING_VAR_WINDOW):
@@ -145,15 +147,8 @@ def load_de_data(data_folder, label_file):
         if subj_id not in subject_files: subject_files[subj_id] = []
         subject_files[subj_id].append(f)
 
-    # --- Initialize Smart Preprocessor ---
     channel_names = get_standard_channel_names()
-    # preprocessor = SmartPreprocessor(channel_names) # DISABLED for Attempt 18 reproduction
-    # print("Initialized Smart Preprocessor for Bad Channel Correction.")
-    # -------------------------------------
 
-    band_weights = None
-    print("Warning: Manual band weights DISABLED. Using raw data.")
-        
     for subj_id in sorted(subject_files.keys()):
         s_files = sorted(subject_files[subj_id], key=lambda x: x.split('_')[1])
         for sess_idx, fname in enumerate(s_files):
@@ -161,76 +156,72 @@ def load_de_data(data_folder, label_file):
             file_path = os.path.join(data_folder, fname)
             try: mat = scipy.io.loadmat(file_path)
             except: continue
-            for trial_i in range(1, 16):
-                key = f"de_LDS{trial_i}"
-                if key not in mat: continue
+            # --- FIX: Dynamic Key Discovery ---
+            # Find all keys that look like EEG or DE data
+            all_keys = [k for k in mat.keys() if ('eeg' in k.lower() or 'de_lds' in k.lower()) and not k.startswith('_')]
+            
+            # Sort keys numerically based on the number at the end (e.g., 'djc_de_LDS1' -> 1)
+            # This handles prefixes like 'djc_' automatically
+            def extract_trial_num(k):
+                nums = ''.join(filter(str.isdigit, k))
+                return int(nums) if nums else 999
+            
+            all_keys.sort(key=extract_trial_num)
+
+            for i, key in enumerate(all_keys):
+                if i >= 15: break 
+                
                 data = mat[key]
                 
-                # --- ROBUST SHAPE CORRECTION ---
-                # Target: (62, samples, 5)
-                # We identify dimensions by size: 62=Channels, 5=Bands
+                # --- CAST TO FLOAT32 IMMEDIATELY ---
+                data = data.astype(np.float32)
+
+                # --- SHAPE CORRECTION TO (N_samples, 62, 11) ---
                 shape = data.shape
-                if shape[0] == 62:
-                    if shape[2] == 5:
-                        pass # Already (62, samples, 5)
-                    elif shape[1] == 5:
-                        data = np.transpose(data, (0, 2, 1)) # (62, 5, samples) -> (62, samples, 5)
-                elif shape[1] == 62:
-                    if shape[2] == 5:
-                        data = np.transpose(data, (1, 0, 2)) # (samples, 62, 5) -> (62, samples, 5)
-                    elif shape[0] == 5:
-                        data = np.transpose(data, (1, 2, 0)) # (5, 62, samples) -> (62, samples, 5)
-                elif shape[2] == 62:
-                    if shape[1] == 5:
-                        data = np.transpose(data, (2, 0, 1)) # (samples, 5, 62) -> (62, samples, 5)
-                    elif shape[0] == 5:
-                        data = np.transpose(data, (2, 1, 0)) # (5, samples, 62) -> (62, samples, 5)
-                # -------------------------------
-
-                # --- ATTEMPT 18 LOGIC: MANUAL CF2 FIX ONLY ---
-                # We blindly apply the fix to CF2 because we know it is often broken.
-                # if 'CF2' in channel_names:
-                #     cf2_idx = channel_names.index('CF2')
-                #     # Check if neighbors exist in the dataset
-                #     n1, n2, n3 = 'FC2', 'C2', 'CP2'
-                #     if n1 in channel_names and n2 in channel_names and n3 in channel_names:
-                #         idx1 = channel_names.index(n1)
-                #         idx2 = channel_names.index(n2)
-                #         idx3 = channel_names.index(n3)
-                        
-                #         # Apply Triangulation Average
-                #         data[cf2_idx, :, :] = (data[idx1, :, :] + data[idx2, :, :] + data[idx3, :, :]) / 3
-                # -----------------------------------------------------------
-
-                # --- 1. Compute Rolling Variance (Feature 6-10) ---
-                data_var = compute_rolling_variance(data, window_size=ROLLING_VAR_WINDOW)
                 
-                # --- 2. Compute Frontal Alpha Asymmetry (Feature 11) ---
-                # Returns (1, Samples, 1)
-                fas_feature = compute_frontal_alpha_asymmetry(data, channel_names)
-                # Broadcast FAS to all 62 nodes: (62, Samples, 1)
-                fas_feature = np.repeat(fas_feature, 62, axis=0)
+                if shape[0] == 62: # (62, N or 11, 11 or N)
+                    if shape[2] == 11 or shape[2] == 5: data = np.transpose(data, (1, 0, 2)) # (62, N, 11) -> (N, 62, 11)
+                    elif shape[1] == 11 or shape[1] == 5: data = np.transpose(data, (2, 0, 1)) # (62, 11, N) -> (N, 62, 11)          
+                elif shape[1] == 62: # (N or 11, 62, 11 or N)
+                    if shape[0] == 11 or shape[0] == 5: data = np.transpose(data, (2, 1, 0)) # (11, 62, N) -> (N, 62, 11)
+                elif shape[2] == 62:
+                    if shape[0] == 11 or shape[0] == 5: data = np.transpose(data, (1, 2, 0))
+                    elif shape[1] == 11 or shape[1] == 5: data = np.transpose(data, (0, 2, 1))
 
-                # --- 3. Stack All Features ---
-                # Data: (62, S, 5) | Var: (62, S, 5) | FAS: (62, S, 1)
-                # Total Features = 11
-                data_combined = np.concatenate([data, data_var, fas_feature], axis=2)
+                # Final guard: Ensure we have (N, 62, Features)
+                if data.shape[1] != 62:
+                    print(f"Skipping {key}: Shape {data.shape} mismatch (Expected N, 62, 11)")
+                    continue
 
-                # Transpose to (samples, 62, 11) for storage/model input
-                data_combined = np.transpose(data_combined, (1, 0, 2))
+                # # --- 1. Compute Rolling Variance (Feature 6-10) ---
+                # data_var = compute_rolling_variance(data, window_size=ROLLING_VAR_WINDOW)
+                
+                # # --- 2. Compute Frontal Alpha Asymmetry (Feature 11) ---
+                # # Returns (1, Samples, 1)
+                # fas_feature = compute_frontal_alpha_asymmetry(data, channel_names)
+                # # Broadcast FAS to all 62 nodes: (62, Samples, 1)
+                # fas_feature = np.repeat(fas_feature, 62, axis=0)
+
+                # # --- 3. Stack All Features ---
+                # # Data: (62, S, 5) | Var: (62, S, 5) | FAS: (62, S, 1)
+                # # Total Features = 11
+                # data_combined = np.concatenate([data, data_var, fas_feature], axis=2)
+
+                # # # Transpose to (samples, 62, 11) for storage/model input
+                # # data_combined = np.transpose(data_combined, (1, 0, 2))
 
 
                 # 5 ORIGINAL MEAN FEATURES ONLY (FOR ATTEMPT 18 REPRODUCTION)
                 # data_final = np.transpose(data, (1, 0, 2))
 
                 # 3. Calculate correct number of samples (dimension 0 of transposed data)
-                num_samples = data_combined.shape[0]
+                num_samples = data.shape[0]
                 
-                X_list.append(data_combined)
-                y_list.append(np.full(num_samples, mapped_labels[trial_i - 1]))
+                X_list.append(data)
+                y_list.append(np.full(num_samples, mapped_labels[i]))
                 session_list.append(np.full(num_samples, session_id))
                 subject_list.append(np.full(num_samples, subj_id))
-                unique_trial_id = subj_id * 1000 + session_id * 100 + trial_i
+                unique_trial_id = subj_id * 1000 + session_id * 100 + i+1
                 trial_list.append(np.full(num_samples, unique_trial_id))
 
 
@@ -244,43 +235,43 @@ def load_de_data(data_folder, label_file):
     subjects = np.concatenate(subject_list, axis=0)
     trials = np.concatenate(trial_list, axis=0)
     
-    # --- ATTEMPT 18 REPRODUCTION: MANUAL Z-SCORE NORMALIZATION ---
-    print("Applying Manual Subject-Specific & Session-Specific Z-Score Normalization...")
+    # # --- ATTEMPT 18 REPRODUCTION: MANUAL Z-SCORE NORMALIZATION ---
+    # print("Applying Manual Subject-Specific & Session-Specific Z-Score Normalization...")
     
-    group_ids = subjects * 1000 + sessions
-    unique_groups, group_indices = np.unique(group_ids, return_inverse=True)
+    # group_ids = subjects * 1000 + sessions
+    # unique_groups, group_indices = np.unique(group_ids, return_inverse=True)
     
-    n_groups = len(unique_groups)
+    # n_groups = len(unique_groups)
     
-    # Initialize arrays for stats
-    # X shape: (N, 62, 10) -> Stats shape: (n_groups, 62, 10)
-    group_sums = np.zeros((n_groups, *X.shape[1:]), dtype=X.dtype)
-    group_sq_sums = np.zeros((n_groups, *X.shape[1:]), dtype=X.dtype)
+    # # Initialize arrays for stats
+    # # X shape: (N, 62, 10) -> Stats shape: (n_groups, 62, 10)
+    # group_sums = np.zeros((n_groups, *X.shape[1:]), dtype=X.dtype)
+    # group_sq_sums = np.zeros((n_groups, *X.shape[1:]), dtype=X.dtype)
     
-    # Compute sums and counts using np.add.at (unbuffered in-place add)
-    np.add.at(group_sums, group_indices, X)
+    # # Compute sums and counts using np.add.at (unbuffered in-place add)
+    # np.add.at(group_sums, group_indices, X)
     
-    # Counts per group
-    group_counts = np.bincount(group_indices)
+    # # Counts per group
+    # group_counts = np.bincount(group_indices)
     
-    # Compute means: (n_groups, 62, 10)
-    # Reshape counts to (n_groups, 1, 1) for broadcasting
-    group_means = group_sums / group_counts[:, None, None]
+    # # Compute means: (n_groups, 62, 10)
+    # # Reshape counts to (n_groups, 1, 1) for broadcasting
+    # group_means = group_sums / group_counts[:, None, None]
     
-    # Broadcast means back to original sample shape
-    # shape: (N, 62, 10)
-    expanded_means = group_means[group_indices]
-    X_centered = X - expanded_means
+    # # Broadcast means back to original sample shape
+    # # shape: (N, 62, 10)
+    # expanded_means = group_means[group_indices]
+    # X_centered = X - expanded_means
     
-    # Compute Stds
-    np.add.at(group_sq_sums, group_indices, X_centered ** 2)
-    group_stds = np.sqrt(group_sq_sums / group_counts[:, None, None])
-    group_stds[group_stds < 1e-6] = 1.0 # Prevent div by zero
+    # # Compute Stds
+    # np.add.at(group_sq_sums, group_indices, X_centered ** 2)
+    # group_stds = np.sqrt(group_sq_sums / group_counts[:, None, None])
+    # group_stds[group_stds < 1e-6] = 1.0 # Prevent div by zero
     
-    # Apply Normalization
-    expanded_stds = group_stds[group_indices]
-    X = X_centered / expanded_stds
-    print(f"Total Samples: {X.shape[0]}")
+    # # Apply Normalization
+    # expanded_stds = group_stds[group_indices]
+    # X = X_centered / expanded_stds
+    # print(f"Total Samples: {X.shape[0]}")
     return X, y, sessions, subjects, trials
 
 
@@ -308,13 +299,13 @@ def run_single_subject_fold(subject_id, args, X_full, y_full, sub_full,
     # 3. Model Initialization (Fresh weights, zero leakage)
     if args.model_type == 'GCN':
         model = GCN_DE_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=128, 
-                             num_classes=3, dropout_rate=0.6, num_layers=2).to(local_device)
+                             num_classes=3, num_layers=2, use_overlap_logic=args.use_overlap_logic).to(local_device)
     elif args.model_type == 'DGCNN':
         model = DGCNN_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=128, 
-                            num_classes=3, dropout_rate=0.6, num_layers=2).to(local_device)
+                            num_classes=3, num_layers=2).to(local_device)
     elif args.model_type == 'ADAPTIVE_DGCNN':
         model = Adaptive_DGCNN(num_nodes=62, in_features=IN_FEATURES, num_classes=3, hidden_dim=128,
-                               dropout_rate=0.6, num_layers=2).to(local_device)
+                               num_layers=2).to(local_device)
 
     # 4. Optimizer Setup (Split for Gamma regularization)
     gamma_params = [p for n, p in model.named_parameters() if 'static_norm.gamma' in n]
@@ -384,7 +375,8 @@ def main():
     args = get_args()
     
     # 1. Data Prep
-    data_folder = f"Data/ExtractedFeatures_{args.window_size}"
+    # data_folder = f"Data/ExtractedFeatures_{args.window_size}"
+    data_folder = os.path.join("Data", f"ExtractedFeatures_{args.window_size}_25overlap")
     label_file = os.path.join(data_folder, "label.mat")
     
     X, y, sessions, subjects, _ = load_de_data(data_folder, label_file)
@@ -539,7 +531,7 @@ def main():
         os.makedirs(errors_dir, exist_ok=True)
 
         # --- UPDATE: Input Features = 10 (Mean + Variance Features) ---
-        IN_FEATURES = 10
+        IN_FEATURES = 11
         
         if args.model_type == 'GCN':
             print("Initializing Static GCN Model...")

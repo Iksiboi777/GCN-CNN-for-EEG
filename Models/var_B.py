@@ -103,8 +103,10 @@
 
 
 
+# from colorama import init
 import torch
 import torch.nn as nn
+from torch.nn import init
 import torch.nn.functional as F
 from torch_geometric.nn import GCNConv, GlobalAttention
 
@@ -227,16 +229,116 @@ class SEBlock(nn.Module):
 #         if return_embedding:
 #             return out, embedding
 #         return out
-    
+
+
+from torch_geometric.nn import global_mean_pool
+from utils.phase2_layers import SubjectSpecificBatchNorm1d
+
+
+class SEBlock_Global(nn.Module):
+    """ Global SE Block: Pools the whole graph to decide feature importance """
+    def __init__(self, in_channels, reduction=4):
+        super(SEBlock_Global, self).__init__()
+        self.fc = nn.Sequential(
+            nn.Linear(in_channels, in_channels // reduction),
+            nn.ReLU(),
+            nn.Linear(in_channels // reduction, in_channels),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x, batch_index):
+        # Global pooling to get (Batch, Features)
+        # We effectively ask: "What is the dominant frequency in this trial?"
+        global_avg = global_mean_pool(x, batch_index) 
+        scale = self.fc(global_avg)
+        # Broadcast back to nodes
+        return x * scale[batch_index]
+
+
+
+# class GCN_DE_Model(nn.Module):
+#     def __init__(self, num_nodes=62, in_features=11, hidden_dim=64, 
+#                  num_classes=3, num_subjects=15, num_layers=2):
+#         super(GCN_DE_Model, self).__init__()
+        
+#         self.num_nodes = num_nodes
+#         self.num_layers = num_layers
+        
+#         # 1. Main Backbone Components
+#         self.ssbn_input = SubjectSpecificBatchNorm1d(in_features, num_subjects) 
+#         self.agli = AdaptiveGraphInputLayer(num_nodes, in_features)
+#         self.se_block = SEBlock_Global(in_features)
+        
+#         self.convs = nn.ModuleList()
+#         self.norms = nn.ModuleList()
+#         for i in range(num_layers):
+#             in_dim = in_features if i == 0 else hidden_dim
+#             self.convs.append(GCNConv(in_dim, hidden_dim))
+#             self.norms.append(SubjectSpecificBatchNorm1d(hidden_dim, num_subjects))
+        
+#         gate_nn = nn.Sequential(nn.Linear(hidden_dim, 1), nn.Sigmoid())
+#         self.pool = GlobalAttention(gate_nn)
+        
+#         # 2. FAS Specialized Head (The "Veto" Mechanism)
+#         # It takes the mean FAS value across the brain (Feature index 10)
+#         self.fas_classifier = nn.Sequential(
+#             nn.Linear(1, 8),
+#             nn.ReLU(),
+#             nn.Linear(8, num_classes)
+#         )
+#         # Use a learnable gate to decide how much to trust FAS vs GCN
+#         self.fusion_gate = nn.Parameter(torch.tensor(0.5)) 
+
+#         self.backbone_classifier = nn.Linear(hidden_dim, num_classes)
+#         self.subject_bias = nn.Embedding(num_subjects + 1, num_classes)
+#         self.subject_bias.weight.data.fill_(0.0)
+
+#     def forward(self, x, edge_index, batch_index, subject_ids_full, return_embedding=False):
+#         # A. EXTRACT RAW FAS (Feature 10) before mixing
+#         # x is (Batch*Nodes, 11). FAS is index 10.
+#         # We average FAS over every graph (subject state)
+#         raw_fas = x[:, 10].unsqueeze(1) # (TotalNodes, 1)
+#         graph_fas = global_mean_pool(raw_fas, batch_index) # (Batch, 1)
+#         fas_logits = self.fas_classifier(graph_fas)
+
+#         # B. MAIN BACKBONE FLOW
+#         x = self.ssbn_input(x, subject_ids_full)
+#         x = self.agli(x)
+#         x = self.se_block(x, batch_index)
+        
+#         for i in range(self.num_layers):
+#             x = self.convs[i](x, edge_index)
+#             x = self.norms[i](x, subject_ids_full)
+#             x = F.relu(x)
+#             if i < self.num_layers - 1:
+#                 x = F.dropout(x, p=0.5, training=self.training)
+        
+#         embedding = self.pool(x, batch_index)
+#         gcn_logits = self.backbone_classifier(embedding)
+        
+#         # C. HYBRID FUSION (Gated Sum)
+#         subject_ids_graph = subject_ids_full[::self.num_nodes]
+#         bias = self.subject_bias(subject_ids_graph)
+        
+#         # Final Logits = GCN + (Gate * FAS) + SubjectBias
+#         # Limits FAS influence to prevent it from overriding everything
+#         gate = torch.sigmoid(self.fusion_gate) 
+#         final_logits = gcn_logits + (gate * fas_logits) + bias
+        
+#         if return_embedding:
+#             return final_logits, embedding
+#         return final_logits
+
 
 
 # ADAPTIVE SUBJECT BIAS MODEL
 
 class GCN_DE_Model(nn.Module):
     def __init__(self, num_nodes=62, in_features=10, hidden_dim=64, 
-                 num_classes=3, dropout_rate=0.5, num_layers=3, num_subjects=15): # Added num_subjects
+                 num_classes=3, dropout_rate=0.5, num_layers=3, num_subjects=15,
+                 use_overlap_logic=False): # Added num_subjects
         super(GCN_DE_Model, self).__init__()
-        
+        self.use_overlap_logic = use_overlap_logic
         # 1. Static Adaptation (Silencing Bad Sensors)
         self.static_norm = AdaptiveGraphInputLayer(num_nodes, in_features)
         
@@ -245,15 +347,25 @@ class GCN_DE_Model(nn.Module):
         
         # 3. GCN Layers
         self.layers = nn.ModuleList()
-        self.bns = nn.ModuleList()
+        self.norms = nn.ModuleList()
         self.dropout_rate = dropout_rate
         
+# --- LAYER 1 ---
         self.layers.append(GCNConv(in_features, hidden_dim))
-        self.bns.append(nn.BatchNorm1d(hidden_dim))
+        if self.use_overlap_logic:
+            # Better for Overlapping/Correlated windows (Attempt 61)
+            self.norms.append(nn.LayerNorm(hidden_dim))
+        else:
+            # Better for Static/Independent 4s windows
+            self.norms.append(nn.BatchNorm1d(hidden_dim))
         
+        # --- HIDDEN LAYERS ---
         for _ in range(num_layers - 1):
             self.layers.append(GCNConv(hidden_dim, hidden_dim))
-            self.bns.append(nn.BatchNorm1d(hidden_dim))
+            if self.use_overlap_logic:
+                self.norms.append(nn.LayerNorm(hidden_dim))
+            else:
+                self.norms.append(nn.BatchNorm1d(hidden_dim))
             
         # 4. Final Pooling: Also Attention-based
         gate_nn_final = nn.Sequential(nn.Linear(hidden_dim, 1), nn.Sigmoid())
@@ -268,16 +380,33 @@ class GCN_DE_Model(nn.Module):
 
         self.dropout = nn.Dropout(dropout_rate)
 
+        self._set_weights()
+
+    def _set_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    init.zeros_(m.bias)
+
     def forward(self, x, edge_index, batch_index, subject_ids=None, return_embedding=False, return_attention=False):
         # 1. Preprocessing
         x = self.static_norm(x)
         x = self.se_block(x, batch_index)
         
         # 2. Convolution
-        for i, (conv, bn) in enumerate(zip(self.layers, self.bns)):
+        for i, (conv, norm) in enumerate(zip(self.layers, self.norms)):
             x = conv(x, edge_index)
-            x = bn(x)
-            x = F.relu(x)
+            # Apply Normalization based on the detected logic
+            if self.use_overlap_logic:
+                # LayerNorm (N*62, Hidden)
+                x = norm(x)
+                x = F.gelu(x)
+            else:
+                # BatchNorm (N*62, Hidden)
+                x = norm(x)
+                x = F.relu(x)
+
             if i < len(self.layers) - 1:
                 x = self.dropout(x)
         

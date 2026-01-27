@@ -92,7 +92,7 @@ for file_name in files:
         ica.apply(raw, exclude=exclude_idx, verbose=False)
         
         # 1. Standard Band (1-49 Hz)
-        raw_standard = raw.copy().filter(1.0, 49.0, fir_design='firwin', verbose=False)
+        raw_standard = raw.copy().filter(1.0, 75.0, fir_design='firwin', verbose=False)
         cleaned_data_dict_standard[key] = raw_standard.get_data()
         
         # 2. Gamma Band (50-75 Hz)

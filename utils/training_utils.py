@@ -18,17 +18,27 @@ def supports_embeddings(model):
     sig = inspect.signature(model.forward)
     return 'return_embedding' in sig.parameters
 
+def supports_subject_ids(model):
+    """Checks if the model's forward method accepts subject IDs (Phase 2)."""
+    sig = inspect.signature(model.forward)
+    return 'subject_ids' in sig.parameters or 'subject_ids_full' in sig.parameters
+
 # --- 1. Single Epoch Runner ---
 def train_epoch(model, loader, optimizer, criterion, device, base_edge_index, in_features):
     model.train()
-    total_loss = 0
+    
+    dense_mode = is_dense_model(model)
+    # Check signature ONCE per epoch to save time
+    sig = inspect.signature(model.forward)
+    has_subject_ids = 'subject_ids' in sig.parameters
+    has_subject_ids_full = 'subject_ids_full' in sig.parameters
+    
+    train_loss = 0
     correct = 0
     total = 0
     
-    dense_mode = is_dense_model(model)
-    
     for batch in loader:
-        # Handle unpacking dynamically (Data, Label) vs (Data, Label, Subject)
+        # Robust Unpacking for [X, Y] or [X, Y, Sub]
         if len(batch) == 3:
             batch_X, batch_y, batch_sub = batch
             batch_sub = batch_sub.to(device)
@@ -37,94 +47,146 @@ def train_epoch(model, loader, optimizer, criterion, device, base_edge_index, in
             batch_sub = None
             
         batch_X, batch_y = batch_X.to(device), batch_y.to(device)
-        batch_X = batch_X + torch.randn_like(batch_X) * 0.01
+
+        if batch_X.is_floating_point():
+             batch_X = batch_X + torch.randn_like(batch_X) * 0.005
         
         optimizer.zero_grad()
         
+        # --- LOGIC BRANCHING ---
         if dense_mode:
-            # Pass subject IDs to the model if available
-            outputs = model(batch_X, subject_ids=batch_sub)
+            if batch_sub is not None and 'subject_ids_graph' in sig.parameters:
+                outputs = model(batch_X, subject_ids_graph=batch_sub)
+            else:
+                outputs = model(batch_X)
         else:
-            # Pathway for Sparse GCN (Flattening + Edge Index Offsetting)
-            curr_batch_size = batch_X.size(0)
-            batch_idx = torch.arange(curr_batch_size, device=device).repeat_interleave(62)
-            offsets = (torch.arange(curr_batch_size, device=device) * 62).view(-1, 1, 1)
-            edge_index = (base_edge_index.unsqueeze(0) + offsets).permute(1, 0, 2).reshape(2, -1)
+            # Sparse Formatting
+            curr_batch_size, num_nodes, _ = batch_X.shape
             batch_X_flat = batch_X.view(-1, in_features)
-            outputs = model(batch_X_flat, edge_index, batch_idx)
-        
+            
+            # Graph Indices
+            batch_idx = torch.arange(curr_batch_size, device=device).repeat_interleave(num_nodes)
+            offsets = (torch.arange(curr_batch_size, device=device) * num_nodes).view(-1, 1, 1)
+            edge_index = (base_edge_index.unsqueeze(0) + offsets).permute(1, 0, 2).reshape(2, -1)
+            
+            # --- CRITICAL FIX: Explicitly Pass Subject IDs ---
+            if batch_sub is not None:
+                if has_subject_ids:
+                    outputs = model(batch_X_flat, edge_index, batch_idx, subject_ids=batch_sub)
+                elif has_subject_ids_full:
+                    # Expand if model asks for full per-node IDs
+                    batch_sub_full = batch_sub.repeat_interleave(num_nodes)
+                    outputs = model(batch_X_flat, edge_index, batch_idx, subject_ids_full=batch_sub_full)
+                else:
+                    # Model doesn't support subjects, just run standard
+                    outputs = model(batch_X_flat, edge_index, batch_idx)
+            else:
+                # No subjects available in batch
+                outputs = model(batch_X_flat, edge_index, batch_idx)
+
         loss = criterion(outputs, batch_y)
         loss.backward()
         optimizer.step()
         
-        total_loss += loss.item()
+        train_loss += loss.item()
         _, predicted = torch.max(outputs.data, 1)
         total += batch_y.size(0)
         correct += (predicted == batch_y).sum().item()
         
-    return total_loss / len(loader), 100 * correct / total
+    return train_loss / len(loader), 100 * correct / total
 
 
-# --- 2. Fixed Evaluate (Handles TypeError and return logic) ---
+# --- 2. Universal Evaluate ---
 def evaluate(model, loader, base_edge_index, criterion, device, in_features, 
              return_preds=False, return_embeddings=False):
     model.eval()
     val_loss, correct, total = 0, 0, 0
-    all_preds, all_labels, all_embeddings = [], [], []
+    all_preds, all_labels = [], []
+    all_embeddings = []
     
     dense_mode = is_dense_model(model)
-    can_embed = supports_embeddings(model)
+    
+    # Pre-calculate signature ONCE to avoid repeated overhead per batch
+    sig = inspect.signature(model.forward)
+    has_subject_ids = 'subject_ids' in sig.parameters
+    has_subject_ids_full = 'subject_ids_full' in sig.parameters
+    # Check if model supports returning embeddings (some older variants might not)
+    supports_emb = 'return_embedding' in sig.parameters
 
     with torch.no_grad():
-        for batch in loader:
-            if len(batch) == 3:
-                batch_X, batch_y, batch_sub = batch
+        for batch_data in loader:
+            # Robust Unpacking for [X, Y] or [X, Y, Sub]
+            if len(batch_data) == 3:
+                batch_X, batch_y, batch_sub = batch_data
                 batch_sub = batch_sub.to(device)
             else:
-                batch_X, batch_y = batch
+                batch_X, batch_y = batch_data
                 batch_sub = None
-            
-            batch_X, batch_y = batch_X.to(device), batch_y.to(device)
-            
-            # Preparation for Sparse models
+                
+            batch_X = batch_X.to(device)
+            batch_y = batch_y.to(device)
+    
+            # Prepare Inputs for Sparse/Dense
             if not dense_mode:
-                curr_batch_size = batch_X.size(0)
-                batch_idx = torch.arange(curr_batch_size, device=device).repeat_interleave(62)
-                offsets = (torch.arange(curr_batch_size, device=device) * 62).view(-1, 1, 1)
-                edge_index = (base_edge_index.unsqueeze(0) + offsets).permute(1, 0, 2).reshape(2, -1)
+                curr_batch_size, num_nodes, _ = batch_X.shape
                 batch_X_flat = batch_X.view(-1, in_features)
-
-            # Forward Pass Logic
-            if return_embeddings and can_embed:
-                if dense_mode:
-                    outputs, embeddings = model(batch_X, subject_id = batch_sub, 
-                                                return_embedding=True)
-                else:
-                    outputs, embeddings = model(batch_X_flat, edge_index, batch_idx, return_embedding=True)
-                all_embeddings.extend(embeddings.cpu().numpy())
-            else:
-                outputs = model(batch_X) if dense_mode else model(batch_X_flat, edge_index, batch_idx)
+                batch_idx = torch.arange(curr_batch_size, device=device).repeat_interleave(num_nodes)
+                offsets = (torch.arange(curr_batch_size, device=device) * num_nodes).view(-1, 1, 1)
+                edge_index = (base_edge_index.unsqueeze(0) + offsets).permute(1, 0, 2).reshape(2, -1)
             
-            loss = criterion(outputs, batch_y)
+            # --- FORWARD PASS (Explicit Logic) ---
+            # Determine flags to pass
+            kwargs = {}
+            if return_embeddings and supports_emb:
+                kwargs['return_embedding'] = True
+            
+            if dense_mode:
+                if batch_sub is not None and 'subject_ids_graph' in sig.parameters:
+                    out = model(batch_X, subject_ids_graph=batch_sub, **kwargs)
+                else:
+                    out = model(batch_X, **kwargs)
+            else:
+                # Sparse Branch
+                if batch_sub is not None:
+                    if has_subject_ids:
+                        out = model(batch_X_flat, edge_index, batch_idx, subject_ids=batch_sub, **kwargs)
+                    elif has_subject_ids_full:
+                        batch_sub_full = batch_sub.repeat_interleave(num_nodes)
+                        out = model(batch_X_flat, edge_index, batch_idx, subject_ids_full=batch_sub_full, **kwargs)
+                    else:
+                        out = model(batch_X_flat, edge_index, batch_idx, **kwargs)
+                else:
+                    out = model(batch_X_flat, edge_index, batch_idx, **kwargs)
+
+            # Handle Output Tuple vs Tensor
+            if isinstance(out, tuple):
+                logits, emb = out
+            else:
+                logits = out
+                emb = None
+
+            loss = criterion(logits, batch_y)
             val_loss += loss.item()
-            _, predicted = torch.max(outputs.data, 1)
+            _, predicted = torch.max(logits.data, 1)
             total += batch_y.size(0)
             correct += (predicted == batch_y).sum().item()
             
             if return_preds:
                 all_preds.extend(predicted.cpu().numpy())
                 all_labels.extend(batch_y.cpu().numpy())
+                if return_embeddings and emb is not None:
+                    all_embeddings.extend(emb.cpu().numpy())
                 
     acc = 100 * correct / total
-    avg_loss = val_loss / len(loader)
+    avg_loss = val_loss / len(loader) if len(loader) > 0 else 0
     
-    # Matching the exact return structure the User expects
     if return_embeddings:
-        # If model doesn't support embeddings, return empty array to prevent unpacking errors
         emb_data = np.array(all_embeddings) if all_embeddings else np.array([])
         return avg_loss, acc, np.array(all_preds), np.array(all_labels), emb_data
+    
     if return_preds:
         return avg_loss, acc, np.array(all_preds), np.array(all_labels)
+        
     return avg_loss, acc
 
 
@@ -152,6 +214,26 @@ class TrainingManager:
         print(f"TrainingManager initialized.")
         print(f"  Results -> {self.results_dir}")
         print(f"  Params  -> {self.params_dir}")
+
+        # WRITE SETUP FILE IMMEDIATELY
+        if self.args:
+            self.save_training_setup()
+
+    def save_training_setup(self):
+        filepath = os.path.join(self.params_dir, "training_setup.txt")
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        with open(filepath, "w") as f:
+            f.write("=== TRAINING SETUP & HYPERPARAMETERS ===\n")
+            f.write(f"Model Class: {self.model.__class__.__name__}\n\n")
+            
+            # If args is a dictionary (our new logic)
+            if isinstance(self.args, dict):
+                for k, v in self.args.items():
+                    f.write(f"{k}: {v}\n")
+            # If args is Namespace (argparse)
+            else:
+                f.write(str(self.args))
+        # print(f"Saved: {filepath}")
 
     def update_history(self, t_loss, t_acc, v_loss, v_acc):
         self.history['train_loss'].append(t_loss)

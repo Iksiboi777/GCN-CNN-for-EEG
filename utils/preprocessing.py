@@ -22,7 +22,7 @@ def get_de_features(segment, fs):
         'Theta': (4, 8),   #
         'Alpha': (8, 13),  #
         'Beta': (13, 30), #
-        'Gamma': (30, 45)  #
+        'Gamma': (30, 50)  #
     }
     
     nyquist = 0.5 * fs
