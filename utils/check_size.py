@@ -4,7 +4,7 @@ import numpy as np
 
 # --- CONFIGURATION ---
 # Change this filename to one that exists in your new folder
-TARGET_FILE = "../Data/ExtractedFeatures_4s/1_20131027.mat" 
+TARGET_FILE = "../Data/Preprocessed_SOTA_individual/1_20131027.mat" 
 # ---------------------
 
 def inspect_mat(file_path):

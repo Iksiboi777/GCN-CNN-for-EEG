@@ -485,7 +485,7 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 BATCH_SIZE = 128
 EPOCHS = 120
 LEARNING_RATE = 0.0001
-WEIGHT_DECAY = 1e-3      # Strong L2 to prevent stimulus-specific overfitting
+WEIGHT_DECAY = 5e-3      # Strong L2 to prevent stimulus-specific overfitting
 L1_LAMBDA = 1e-4        # Sparsity penalty for the Adaptive Layer (AGLI)
 PATIENCE = 30
 

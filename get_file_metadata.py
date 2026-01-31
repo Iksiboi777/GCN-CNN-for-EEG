@@ -16,7 +16,7 @@ def get_file_creation_time(path):
         return None
 
 # Define the path based on your workspace
-file_path = r"Errors\GCN_DE_1s\Attempt_2_session_holdout\classification_report.txt"
+file_path = r"Errors\GraphSAGE_DE_1s\Attempt_60_Phase2\classification_report.txt"
 
 # Check if file exists and get time
 if os.path.exists(file_path):

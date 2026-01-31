@@ -262,6 +262,7 @@ import json
 import torch.multiprocessing as mp
 
 from Models.var_A import Attempt61_CNNGCN
+from Models.var_N import SOTA_CNNGCN
 from Models.graph_construction import get_knn_adjacency_matrix
 from utils.training_utils import train_model_with_interrupt, evaluate
 from utils.focal_loss import FocalLoss
@@ -286,25 +287,25 @@ class ScaledSharedDataset(torch.utils.data.Dataset):
         y = self.y[real_idx]
         sub = self.sub[real_idx]
         
-        # Scale only this ONE sample (62, 400)
-        # Robust scale: (x - median) / interquartile_range
-        median = x.median()
-        q75, q25 = torch.quantile(x, 0.75), torch.quantile(x, 0.25)
-        iqr = q75 - q25 + 1e-6
-        x_scaled = (x - median) / iqr
+        # # Scale only this ONE sample (62, 400)
+        # # Robust scale: (x - median) / interquartile_range
+        # median = x.median()
+        # q75, q25 = torch.quantile(x, 0.75), torch.quantile(x, 0.25)
+        # iqr = q75 - q25 + 1e-6
+        # x_scaled = (x - median) / iqr
 
         
-        return x_scaled, y, sub
+        return x, y, sub
     
 
 # --- Configuration ---
 LOCS_FILE = "utils/channel_62_pos.locs"
 CONFIG_FILE = "run_config.json"
-BATCH_SIZE = 32 # Smaller batch size for Raw Data (memory heavy)
+BATCH_SIZE = 1024 # Smaller batch size for Raw Data (memory heavy)
 EPOCHS = 60
-LEARNING_RATE = 0.0005
+LEARNING_RATE = 0.001
 WEIGHT_DECAY = 1e-4
-PATIENCE = 10
+PATIENCE = 20
 
 
 def get_next_run_id(model_type):
@@ -424,8 +425,7 @@ def run_fold(subject_id, args, X_full, y_full, sub_full, sess_full, base_edge_in
     if args.mode == 'sub_indep':
         # LOSO: Train = All Subs except X, Test = Subject X
         test_mask = (sub_full == subject_id)
-        train_mask = (sub_full != subject_id)
-        
+        train_mask = (sub_full != subject_id)        
         run_name = f"Attempt_{run_id}_LOSO_Raw"
         path_suffix = f"Subject_{subject_id}"
         
@@ -434,8 +434,7 @@ def run_fold(subject_id, args, X_full, y_full, sub_full, sess_full, base_edge_in
         # Train = Sess 1+2, Test = Sess 3
         subj_mask = (sub_full == subject_id)
         test_mask = subj_mask & (sess_full == 3)
-        train_mask = subj_mask & (sess_full != 3) # Sess 1 & 2
-        
+        train_mask = subj_mask & (sess_full != 3) # Sess 1 & 2        
         run_name = f"Attempt_{run_id}_SessionHoldout_Raw"
         path_suffix = f"Subject_{subject_id}"
 
@@ -449,10 +448,12 @@ def run_fold(subject_id, args, X_full, y_full, sub_full, sess_full, base_edge_in
     # 3. Loaders (Pin Memory is vital for Raw data)
     train_loader = DataLoader(train_ds, 
                               batch_size=BATCH_SIZE, shuffle=True, 
-                              num_workers=0, pin_memory=True)
+                              num_workers=4, pin_memory=True, 
+                              persistent_workers=True, prefetch_factor=4)
     test_loader = DataLoader(test_ds, 
                              batch_size=BATCH_SIZE, shuffle=False, 
-                             num_workers=0, pin_memory=True)
+                             num_workers=4, pin_memory=True, 
+                             persistent_workers=True, prefetch_factor=4)
     
     # 4. Model Setup
     # Model Config for Logging
@@ -464,26 +465,33 @@ def run_fold(subject_id, args, X_full, y_full, sub_full, sess_full, base_edge_in
         "Test_Subject": subject_id
     }
 
-    model = Attempt61_CNNGCN(num_nodes=62, time_steps=400).to(device)
+    # model = Attempt61_CNNGCN(num_nodes=62, time_steps=400).to(device)
+    model = SOTA_CNNGCN(num_nodes=62, time_steps=400).to(device) # <--- NEW
     
     # 5. Optimization
     optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS)
+    # scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS)
+    # OneCycleLR is often faster to converge than CosineAnnealing alone
+    scheduler = optim.lr_scheduler.OneCycleLR(
+        optimizer, max_lr=LEARNING_RATE, 
+        steps_per_epoch=len(train_loader), epochs=EPOCHS,
+        pct_start=0.3
+    )
     
     # Slight weighting to help class balance if needed
     criterion = FocalLoss(alpha=torch.tensor([1.2, 1.0, 1.0]).to(device), gamma=2.0)
 
     # 6. Directories
-    results_dir = os.path.join("Results", "CNNGCN_Raw", run_name, path_suffix)
-    params_dir = os.path.join("Params", "CNNGCN_Raw", run_name, path_suffix)
-    errors_dir = os.path.join("Errors", "CNNGCN_Raw", run_name, path_suffix)
+    results_dir = os.path.join("Results", "SOTA_CNNGCN_Raw", run_name, path_suffix)
+    params_dir = os.path.join("Params", "SOTA_CNNGCN_Raw", run_name, path_suffix)
+    errors_dir = os.path.join("Errors", "SOTA_CNNGCN_Raw", run_name, path_suffix)
 
     # 7. Execute Training matches train_de.py workflow
     train_model_with_interrupt(
         model, train_loader, test_loader, optimizer, criterion, scheduler, 
         EPOCHS, device, results_dir, params_dir, errors_dir, f"Sub {subject_id}",
         base_edge_index.to(device), evaluate, hyperparams=model_config, 
-        in_features=400 # Just for logging, not used by raw model
+        in_features=400, patience = PATIENCE # Just for logging, not used by raw model
     )
 
     # 8. Final Save
@@ -497,7 +505,7 @@ def run_fold(subject_id, args, X_full, y_full, sub_full, sess_full, base_edge_in
 # -----------------------------------------------------------------------------
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--dataset_folder', type=str, default='Data/Preprocessed_2s_25overlap')
+    parser.add_argument('--dataset_folder', type=str, default='Data/Preprocessed_SOTA_individual')
     parser.add_argument('--mode', type=str, default='sub_indep', choices=['sub_indep', 'sub_dep'])
     parser.add_argument('--max_parallel', type=int, default=1, help="Keep low for Raw Data (RAM usage)")
     args = parser.parse_args()
@@ -516,8 +524,8 @@ def main():
     base_edge_index = get_knn_adjacency_matrix(LOCS_FILE, k=5).share_memory_()
 
     # 3. Run Setup
-    run_id = get_next_run_id("CNNGCN_Raw")
-    model_name_str = "CNNGCN_Raw"
+    run_id = get_next_run_id("SOTA_CNNGCN_Raw")
+    model_name_str = "SOTA_CNNGCN_Raw"
     
     print(f"--- STARTING RUN: {model_name_str} | Attempt {run_id} | Mode: {args.mode} ---")
     

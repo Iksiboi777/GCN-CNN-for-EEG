@@ -1,10 +1,10 @@
 {
     "run_counter": 1,
-    "run_counter_4s": 66,
-    "run_counter_1s": 74,
+    "run_counter_4s": 72,
+    "run_counter_1s": 76,
     "1s": 5,
     "global_run_counter_1s": 1,
     "run_counter_GCN": 4,
     "run_counter_2s": 5,
-    "run_counter_CNNGCN_Raw": 10
+    "run_counter_CNNGCN_Raw": 14
 }

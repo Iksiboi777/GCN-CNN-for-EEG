@@ -334,7 +334,7 @@ class TrainingManager:
 def train_model_with_interrupt(model, train_loader, test_loader, optimizer, 
                                criterion, scheduler, epochs, device, results_dir, 
                                params_dir, errors_dir, subject_tag, base_edge_index, 
-                               evaluate_fn, hyperparams=None, in_features=5):
+                               evaluate_fn, hyperparams=None, in_features=5, patience=20):
     """
     Orchestrates the full training process.
     - Calls train_epoch() for the logic.
@@ -389,7 +389,7 @@ def train_model_with_interrupt(model, train_loader, test_loader, optimizer,
             # 5. Scheduler & Early Stopping
             scheduler.step()
             
-            if patience_counter >= 40:
+            if patience_counter >= patience:
                 print("Early stopping triggered.")
                 break
                     
