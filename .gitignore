@@ -76,6 +76,18 @@ Results/GraphSAGE_DE_4s/*
 !Results/GraphSAGE_DE_4s/Attempt_27_Phase2*/
 
 
+!Results/GRAPH_SAGE_DE_4s/
+Results/GRAPH_SAGE_DE_4s/*
+!Results/GRAPH_SAGE_DE_4s/Attempt_70_LOSO_Parallel*/
+!Results/GRAPH_SAGE_DE_4s/Attempt_71_LOSO_Parallel*/
+!Results/GRAPH_SAGE_DE_4s/Attempt_72_LOSO_Parallel*/
+
+
+!Results/GRAPH_SAGE_DE_1s/
+Results/GRAPH_SAGE_DE_1s/*
+!Results/GRAPH_SAGE_DE_1s/Attempt_75_LOSO_Parallel*/
+
+
 # --- ERRORS FOLDER RULES ---
 # 1. Ignore everything in Errors by default
 Errors/*
@@ -130,6 +142,19 @@ Errors/GraphSAGE_DE_1s/*
 !Errors/GraphSAGE_DE_4s/
 Errors/GraphSAGE_DE_4s/*
 !Errors/GraphSAGE_DE_4s/Attempt_27_Phase2*/
+
+
+!Errors/GRAPH_SAGE_DE_4s/
+Errors/GRAPH_SAGE_DE_4s/*
+!Errors/GRAPH_SAGE_DE_4s/Attempt_70_LOSO_Parallel*/
+!Errors/GRAPH_SAGE_DE_4s/Attempt_71_LOSO_Parallel*/
+!Errors/GRAPH_SAGE_DE_4s/Attempt_72_LOSO_Parallel*/
+
+
+!Errors/GRAPH_SAGE_DE_1s/
+Errors/GRAPH_SAGE_DE_1s/*
+!Errors/GRAPH_SAGE_DE_1s/Attempt_75_LOSO_Parallel*/
+
 
 Data/
 Dataset_Papers/
