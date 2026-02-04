@@ -379,19 +379,22 @@ def train_model_with_interrupt(model, train_loader, test_loader, optimizer,
             if improved:
                 # Add a visual indicator for new best models
                 log_line += f"  ★ BEST (Ep {epoch})"
-                patience_counter = 0 
+                # patience_counter = 0 
             else:
                 pass
-                patience_counter += 1
+                # patience_counter += 1
             
             print(log_line)
             
-            # 5. Scheduler & Early Stopping
-            scheduler.step()
+            # --- Fix: Handle different scheduler types ---
+            if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                scheduler.step(val_loss)
+            else:
+                scheduler.step()
             
-            if patience_counter >= patience:
-                print("Early stopping triggered.")
-                break
+            # if patience_counter >= patience:
+            #     print("Early stopping triggered.")
+            #     break
                     
     except KeyboardInterrupt:
         manager.handle_interrupt()
@@ -413,3 +416,6 @@ def train_model_with_interrupt(model, train_loader, test_loader, optimizer,
         torch.save(manager.best_model_wts, os.path.join(manager.params_dir, "best_model_rescue.pth"))
     
     print(f"Total Time: {time.time() - start_time:.2f}s")
+
+    # End of train_model_with_interrupt
+    # return manager.best_val_acc 

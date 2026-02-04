@@ -108,7 +108,7 @@ import torch
 import torch.nn as nn
 from torch.nn import init
 import torch.nn.functional as F
-from torch_geometric.nn import GCNConv, GlobalAttention
+from torch_geometric.nn import GCNConv, GlobalAttention, AttentionalAggregation
 
 class AdaptiveGraphInputLayer(nn.Module):
     """
@@ -334,9 +334,9 @@ class SEBlock_Global(nn.Module):
 # ADAPTIVE SUBJECT BIAS MODEL
 
 class GCN_DE_Model(nn.Module):
-    def __init__(self, num_nodes=62, in_features=10, hidden_dim=64, 
-                 num_classes=3, dropout_rate=0.5, num_layers=3, num_subjects=15,
-                 use_overlap_logic=False): # Added num_subjects
+    def __init__(self, num_nodes=62, in_features=10, hidden_dim=128, 
+                 num_classes=3, dropout_rate=0.5, num_layers=2, num_subjects=15,
+                 use_overlap_logic=False, use_doubling=False): # Added num_subjects
         super(GCN_DE_Model, self).__init__()
         self.use_overlap_logic = use_overlap_logic
         # 1. Static Adaptation (Silencing Bad Sensors)
@@ -350,28 +350,38 @@ class GCN_DE_Model(nn.Module):
         self.norms = nn.ModuleList()
         self.dropout_rate = dropout_rate
         
-# --- LAYER 1 ---
-        self.layers.append(GCNConv(in_features, hidden_dim))
-        if self.use_overlap_logic:
-            # Better for Overlapping/Correlated windows (Attempt 61)
-            self.norms.append(nn.LayerNorm(hidden_dim))
-        else:
-            # Better for Static/Independent 4s windows
-            self.norms.append(nn.BatchNorm1d(hidden_dim))
-        
-        # --- HIDDEN LAYERS ---
-        for _ in range(num_layers - 1):
-            self.layers.append(GCNConv(hidden_dim, hidden_dim))
+        current_input_dim = in_features
+        current_hidden_dim = hidden_dim
+
+        for i in range(num_layers):
+            # Create layer
+            self.layers.append(GCNConv(current_input_dim, current_hidden_dim))
+            
+            # Apply Normalization logic
             if self.use_overlap_logic:
-                self.norms.append(nn.LayerNorm(hidden_dim))
+                # Better for Overlapping/Correlated windows
+                self.norms.append(nn.LayerNorm(current_hidden_dim))
             else:
-                self.norms.append(nn.BatchNorm1d(hidden_dim))
+                # Better for Static/Independent 4s windows
+                self.norms.append(nn.BatchNorm1d(current_hidden_dim))
+            
+            # Preparation for the NEXT layer:
+            current_input_dim = current_hidden_dim 
+            
+            # Logic: If doubling, multiply hidden dim for the NEXT layer's output
+            if use_doubling:
+                current_hidden_dim = current_hidden_dim * 2
+            # else: current_hidden_dim stays the same (Standard Fixed Width)
+        
+        # The dimension of the final embedding is whatever the last layer output
+        final_embedding_dim = current_input_dim
             
         # 4. Final Pooling: Also Attention-based
-        gate_nn_final = nn.Sequential(nn.Linear(hidden_dim, 1), nn.Sigmoid())
-        self.final_pool = GlobalAttention(gate_nn_final)
+        gate_nn_final = nn.Sequential(nn.Linear(final_embedding_dim, 1), nn.Sigmoid())
+        self.final_pool = AttentionalAggregation(gate_nn_final)
+        # self.final_pool = GlobalAttention(gate_nn_final)
         
-        self.fc = nn.Linear(hidden_dim, num_classes)
+        self.fc = nn.Linear(final_embedding_dim, num_classes)
         
         # --- NEW: SUBJECT BIAS ---
         self.subject_bias = nn.Embedding(num_subjects + 1, num_classes)

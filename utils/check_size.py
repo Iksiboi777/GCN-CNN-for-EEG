@@ -4,7 +4,7 @@ import numpy as np
 
 # --- CONFIGURATION ---
 # Change this filename to one that exists in your new folder
-TARGET_FILE = "../Data/Preprocessed_SOTA_individual/1_20131027.mat" 
+TARGET_FILE = "../Data/ExtractedFeatures_1s/1_20131030.mat" 
 # ---------------------
 
 def inspect_mat(file_path):
@@ -40,13 +40,13 @@ def inspect_mat(file_path):
             shape = data.shape
             print(f"{key:<12} | {str(shape):<25} | {data.dtype}")
             
-            # Sanity Check
-            if len(shape) == 3:
-                total_windows += shape[0]
-                if shape[2] != 400:
-                    print(f"  ⚠️ WARNING: Time dimension is {shape[2]}, expected 400!")
-                if shape[1] != 62:
-                    print(f"  ⚠️ WARNING: Channel dimension is {shape[1]}, expected 62!")
+            # # Sanity Check
+            # if len(shape) == 3:
+            #     total_windows += shape[0]
+            #     if shape[2] != 400:
+            #         print(f"  ⚠️ WARNING: Time dimension is {shape[2]}, expected 400!")
+            #     if shape[1] != 62:
+            #         print(f"  ⚠️ WARNING: Channel dimension is {shape[1]}, expected 62!")
 
         print("=" * 50)
         print(f"✅ Total Windows in Session: {total_windows}")

@@ -13,9 +13,10 @@ import json
 from Models.var_B import GCN_DE_Model
 from Models.var_C import DGCNN_Model
 from Models.var_D import Adaptive_DGCNN
+from Models.var_ind_graph import GraphSAGE_EEG_Model
 from Models.graph_construction import get_knn_adjacency_matrix
 from utils.training_utils import train_model_with_interrupt, evaluate
-# from utils.feature_engineering import SmartPreprocessor, get_standard_channel_names
+from utils.feature_engineering import SmartPreprocessor, get_standard_channel_names
 # from sklearn.preprocessing import RobustScaler # REMOVED to match Attempt 18
 from utils.focal_loss import FocalLoss
 
@@ -24,11 +25,11 @@ import torch.multiprocessing as mp
 
 # --- Configuration ---
 LOCS_FILE = "utils/channel_62_pos.locs"
-BATCH_SIZE = 512
-EPOCHS = 100
-LEARNING_RATE = 0.0004
-WEIGHT_DECAY = 5e-3 
-PATIENCE = 5
+BATCH_SIZE = 256
+EPOCHS = 120
+LEARNING_RATE = 0.001
+WEIGHT_DECAY = 1e-3 
+PATIENCE = 30
 # --- NEW: Sparsity Penalty for Adaptive Layer ---
 L1_LAMBDA = 1e-4  # Force gamma parameters towards zero
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -60,16 +61,16 @@ def get_next_run_id(window_size):
 
 def get_args():
     parser = argparse.ArgumentParser(description="Train GCN-DE for EEG Emotion Recognition")
-    parser.add_argument('--mode', type=str, default='sub_indep', choices=['sub_dep', 'sub_indep'],
+    parser.add_argument('--mode', type=str, default='sub_dep', choices=['sub_dep', 'sub_indep'],
                         help="Training mode: 'sub_dep' (Session split) or 'sub_indep' (LOSO)")
-    parser.add_argument('--window_size', type=str, default='2s', choices=['1s', '4s', '2s'],
+    parser.add_argument('--window_size', type=str, default='1s', choices=['1s', '4s', '2s'],
                         help="Feature window size: '1s' or '4s'")
     parser.add_argument('--model_type', type=str, default = 'GCN', 
-                        choices=['GCN', 'DGCNN', 'ADAPTIVE_DGCNN'],
+                        choices=['GCN', 'DGCNN', 'ADAPTIVE_DGCNN', 'GraphSAGE'],
                         help="Type of GCN model to use")
     parser.add_argument('--max_parallel', type=int, default=4, 
                         help="Maximum number of parallel processes")
-    parser.add_argument('--use_overlap_logic', type=bool, default=True,
+    parser.add_argument('--use_overlap_logic', type=bool, default=False,
                         help="Whether to use overlap logic in GCN_DE_Model")
     return parser.parse_args()
 
@@ -88,34 +89,6 @@ def compute_rolling_variance(data, window_size=ROLLING_VAR_WINDOW):
         vars_list.append(np.var(slice_data, axis=1))
         
     return np.stack(vars_list, axis=1)
-
-
-def compute_frontal_alpha_asymmetry(data, channel_names):
-    """
-    Computes FAS = ln(Right Alpha) - ln(Left Alpha)
-    Specifically using F4 (Right) and F3 (Left) Alpha band (index 2).
-    Input Data: (62, Samples, Bands)
-    Output: (1, Samples, 1) -> Broadcastable Feature
-    """
-    if 'F4' not in channel_names or 'F3' not in channel_names:
-        # Fallback if specific channels missing, return zeros
-        return np.zeros((1, data.shape[1], 1))
-        
-    f4_idx = channel_names.index('F4')
-    f3_idx = channel_names.index('F3')
-    
-    # Alpha band is index 2 (Delta, Theta, Alpha, Beta, Gamma)
-    # We use a small epsilon for log stability
-    alpha_right = data[f4_idx, :, 2] + 1e-6
-    alpha_left  = data[f3_idx, :, 2] + 1e-6
-    
-    # Formula: ln(Right) - ln(Left)
-    fas = np.log(alpha_right) - np.log(alpha_left)
-    
-    # Reshape to (1, Samples, 1) to match dimensionality requirements for concatenation
-    # We pretend this is a "global" feature for the whole brain or broadcast it
-    fas = fas.reshape(1, -1, 1) 
-    return fas
 
 
 def load_de_data(data_folder, label_file):
@@ -146,8 +119,15 @@ def load_de_data(data_folder, label_file):
         if subj_id not in subject_files: subject_files[subj_id] = []
         subject_files[subj_id].append(f)
 
+    # --- Initialize Smart Preprocessor ---
     channel_names = get_standard_channel_names()
+    # preprocessor = SmartPreprocessor(channel_names) # DISABLED for Attempt 18 reproduction
+    # print("Initialized Smart Preprocessor for Bad Channel Correction.")
+    # -------------------------------------
 
+    band_weights = None
+    print("Warning: Manual band weights DISABLED. Using raw data.")
+        
     for subj_id in sorted(subject_files.keys()):
         s_files = sorted(subject_files[subj_id], key=lambda x: x.split('_')[1])
         for sess_idx, fname in enumerate(s_files):
@@ -155,72 +135,51 @@ def load_de_data(data_folder, label_file):
             file_path = os.path.join(data_folder, fname)
             try: mat = scipy.io.loadmat(file_path)
             except: continue
-            # --- FIX: Dynamic Key Discovery ---
-            # Find all keys that look like EEG or DE data
-            all_keys = [k for k in mat.keys() if ('eeg' in k.lower() or 'de_lds' in k.lower()) and not k.startswith('_')]
-            
-            # Sort keys numerically based on the number at the end (e.g., 'djc_de_LDS1' -> 1)
-            # This handles prefixes like 'djc_' automatically
-            def extract_trial_num(k):
-                nums = ''.join(filter(str.isdigit, k))
-                return int(nums) if nums else 999
-            
-            all_keys.sort(key=extract_trial_num)
-
-            for i, key in enumerate(all_keys):
-                if i >= 15: break 
-                
+            for trial_i in range(1, 16):
+                key = f"de_LDS{trial_i}"
+                if key not in mat: continue
                 data = mat[key]
                 
-                # --- CAST TO FLOAT32 IMMEDIATELY ---
-                data = data.astype(np.float32)
-
-                # --- SHAPE CORRECTION TO (N_samples, 62, 11) ---
+                # --- ROBUST SHAPE CORRECTION ---
+                # Target: (62, samples, 5)
+                # We identify dimensions by size: 62=Channels, 5=Bands
                 shape = data.shape
-                
-                if shape[0] == 62: # (62, N or 11, 11 or N)
-                    if shape[2] == 11 or shape[2] == 5: data = np.transpose(data, (1, 0, 2)) # (62, N, 11) -> (N, 62, 11)
-                    elif shape[1] == 11 or shape[1] == 5: data = np.transpose(data, (2, 0, 1)) # (62, 11, N) -> (N, 62, 11)          
-                elif shape[1] == 62: # (N or 11, 62, 11 or N)
-                    if shape[0] == 11 or shape[0] == 5: data = np.transpose(data, (2, 1, 0)) # (11, 62, N) -> (N, 62, 11)
+                if shape[0] == 62:
+                    if shape[2] == 5:
+                        pass # Already (62, samples, 5)
+                    elif shape[1] == 5:
+                        data = np.transpose(data, (0, 2, 1)) # (62, 5, samples) -> (62, samples, 5)
+                elif shape[1] == 62:
+                    if shape[2] == 5:
+                        data = np.transpose(data, (1, 0, 2)) # (samples, 62, 5) -> (62, samples, 5)
+                    elif shape[0] == 5:
+                        data = np.transpose(data, (1, 2, 0)) # (5, 62, samples) -> (62, samples, 5)
                 elif shape[2] == 62:
-                    if shape[0] == 11 or shape[0] == 5: data = np.transpose(data, (1, 2, 0))
-                    elif shape[1] == 11 or shape[1] == 5: data = np.transpose(data, (0, 2, 1))
+                    if shape[1] == 5:
+                        data = np.transpose(data, (2, 0, 1)) # (samples, 5, 62) -> (62, samples, 5)
+                    elif shape[0] == 5:
+                        data = np.transpose(data, (2, 1, 0)) # (5, samples, 62) -> (62, samples, 5)
+                # -------------------------------
 
-                # Final guard: Ensure we have (N, 62, Features)
-                if data.shape[1] != 62:
-                    print(f"Skipping {key}: Shape {data.shape} mismatch (Expected N, 62, 11)")
-                    continue
-
-                # # --- 1. Compute Rolling Variance (Feature 6-10) ---
-                # data_var = compute_rolling_variance(data, window_size=ROLLING_VAR_WINDOW)
+                # --- RESTORED: Variance Calculation ---
+                # Compute rolling variance (Strategy V2)
+                data_var = compute_rolling_variance(data, window_size=ROLLING_VAR_WINDOW)
                 
-                # # --- 2. Compute Frontal Alpha Asymmetry (Feature 11) ---
-                # # Returns (1, Samples, 1)
-                # fas_feature = compute_frontal_alpha_asymmetry(data, channel_names)
-                # # Broadcast FAS to all 62 nodes: (62, Samples, 1)
-                # fas_feature = np.repeat(fas_feature, 62, axis=0)
+                # Stack: (62, samples, 5) + (62, samples, 5) -> (62, samples, 10)
+                data_final = np.concatenate([data, data_var], axis=2)
 
-                # # --- 3. Stack All Features ---
-                # # Data: (62, S, 5) | Var: (62, S, 5) | FAS: (62, S, 1)
-                # # Total Features = 11
-                # data_combined = np.concatenate([data, data_var, fas_feature], axis=2)
-
-                # # # Transpose to (samples, 62, 11) for storage/model input
-                # # data_combined = np.transpose(data_combined, (1, 0, 2))
-
+                # Transpose to (samples, 62, 10) for storage/model input
+                data_final = np.transpose(data_final, (1, 0, 2))
 
                 # 5 ORIGINAL MEAN FEATURES ONLY (FOR ATTEMPT 18 REPRODUCTION)
                 # data_final = np.transpose(data, (1, 0, 2))
 
-                # 3. Calculate correct number of samples (dimension 0 of transposed data)
-                num_samples = data.shape[0]
-                
-                X_list.append(data)
-                y_list.append(np.full(num_samples, mapped_labels[i]))
+                num_samples = data_final.shape[0]
+                X_list.append(data_final)
+                y_list.append(np.full(num_samples, mapped_labels[trial_i - 1]))
                 session_list.append(np.full(num_samples, session_id))
                 subject_list.append(np.full(num_samples, subj_id))
-                unique_trial_id = subj_id * 1000 + session_id * 100 + i+1
+                unique_trial_id = subj_id * 1000 + session_id * 100 + trial_i
                 trial_list.append(np.full(num_samples, unique_trial_id))
 
 
@@ -234,43 +193,43 @@ def load_de_data(data_folder, label_file):
     subjects = np.concatenate(subject_list, axis=0)
     trials = np.concatenate(trial_list, axis=0)
     
-    # # --- ATTEMPT 18 REPRODUCTION: MANUAL Z-SCORE NORMALIZATION ---
-    # print("Applying Manual Subject-Specific & Session-Specific Z-Score Normalization...")
+    # --- ATTEMPT 18 REPRODUCTION: MANUAL Z-SCORE NORMALIZATION ---
+    print("Applying Manual Subject-Specific & Session-Specific Z-Score Normalization...")
     
-    # group_ids = subjects * 1000 + sessions
-    # unique_groups, group_indices = np.unique(group_ids, return_inverse=True)
+    group_ids = subjects * 1000 + sessions
+    unique_groups, group_indices = np.unique(group_ids, return_inverse=True)
     
-    # n_groups = len(unique_groups)
+    n_groups = len(unique_groups)
     
-    # # Initialize arrays for stats
-    # # X shape: (N, 62, 10) -> Stats shape: (n_groups, 62, 10)
-    # group_sums = np.zeros((n_groups, *X.shape[1:]), dtype=X.dtype)
-    # group_sq_sums = np.zeros((n_groups, *X.shape[1:]), dtype=X.dtype)
+    # Initialize arrays for stats
+    # X shape: (N, 62, 5) -> Stats shape: (n_groups, 62, 5)
+    group_sums = np.zeros((n_groups, *X.shape[1:]), dtype=X.dtype)
+    group_sq_sums = np.zeros((n_groups, *X.shape[1:]), dtype=X.dtype)
     
-    # # Compute sums and counts using np.add.at (unbuffered in-place add)
-    # np.add.at(group_sums, group_indices, X)
+    # Compute sums and counts using np.add.at (unbuffered in-place add)
+    np.add.at(group_sums, group_indices, X)
     
-    # # Counts per group
-    # group_counts = np.bincount(group_indices)
+    # Counts per group
+    group_counts = np.bincount(group_indices)
     
-    # # Compute means: (n_groups, 62, 10)
-    # # Reshape counts to (n_groups, 1, 1) for broadcasting
-    # group_means = group_sums / group_counts[:, None, None]
+    # Compute means: (n_groups, 62, 5)
+    # Reshape counts to (n_groups, 1, 1) for broadcasting
+    group_means = group_sums / group_counts[:, None, None]
     
-    # # Broadcast means back to original sample shape
-    # # shape: (N, 62, 10)
-    # expanded_means = group_means[group_indices]
-    # X_centered = X - expanded_means
+    # Broadcast means back to original sample shape
+    # shape: (N, 62, 5)
+    expanded_means = group_means[group_indices]
+    X_centered = X - expanded_means
     
-    # # Compute Stds
-    # np.add.at(group_sq_sums, group_indices, X_centered ** 2)
-    # group_stds = np.sqrt(group_sq_sums / group_counts[:, None, None])
-    # group_stds[group_stds < 1e-6] = 1.0 # Prevent div by zero
+    # Compute Stds
+    np.add.at(group_sq_sums, group_indices, X_centered ** 2)
+    group_stds = np.sqrt(group_sq_sums / group_counts[:, None, None])
+    group_stds[group_stds < 1e-6] = 1.0 # Prevent div by zero
     
-    # # Apply Normalization
-    # expanded_stds = group_stds[group_indices]
-    # X = X_centered / expanded_stds
-    # print(f"Total Samples: {X.shape[0]}")
+    # Apply Normalization
+    expanded_stds = group_stds[group_indices]
+    X = X_centered / expanded_stds
+    print(f"Total Samples: {X.shape[0]}")
     return X, y, sessions, subjects, trials
 
 
@@ -293,7 +252,7 @@ def run_single_subject_fold(subject_id, args, X_full, y_full, sub_full,
     X_train, y_train = X_full[~test_mask], y_full[~test_mask]
     X_test, y_test = X_full[test_mask], y_full[test_mask]
 
-    IN_FEATURES = 11
+    IN_FEATURES = 10
 
     # 3. Model Initialization (Fresh weights, zero leakage)
     if args.model_type == 'GCN':
@@ -304,7 +263,11 @@ def run_single_subject_fold(subject_id, args, X_full, y_full, sub_full,
                             num_classes=3, num_layers=2).to(local_device)
     elif args.model_type == 'ADAPTIVE_DGCNN':
         model = Adaptive_DGCNN(num_nodes=62, in_features=IN_FEATURES, num_classes=3, hidden_dim=128,
-                               num_layers=2).to(local_device)
+                               num_layers=3).to(local_device)
+    elif args.model_type == 'GraphSAGE':
+        model = GraphSAGE_EEG_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=128, 
+                                    num_classes=3, num_layers=2, aggregator='max', 
+                                    use_se=True, use_doubling=False, dropout_rate=0.5).to(local_device)
 
     # 4. Optimizer Setup (Split for Gamma regularization)
     gamma_params = [p for n, p in model.named_parameters() if 'static_norm.gamma' in n]
@@ -375,17 +338,11 @@ def main():
     
     # 1. Data Prep
     # data_folder = f"Data/ExtractedFeatures_{args.window_size}"
-    data_folder = os.path.join("Data", f"ExtractedFeatures_{args.window_size}_25overlap")
+    data_folder = os.path.join("Data", f"ExtractedFeatures_{args.window_size}")
     label_file = os.path.join(data_folder, "label.mat")
     
     X, y, sessions, subjects, _ = load_de_data(data_folder, label_file)
     
-    # 2. Share Tensors in Memory (Crucial for multiprocessing)
-    X_tensor = torch.tensor(X, dtype=torch.float32).share_memory_()
-    y_tensor = torch.tensor(y, dtype=torch.long).share_memory_()
-    sub_tensor = torch.tensor(subjects, dtype=torch.long).share_memory_()
-    base_edge_index = get_knn_adjacency_matrix(LOCS_FILE, k=5).share_memory_()
-
     # 3. Setup Runs
     run_id = get_next_run_id(args.window_size)
     model_name = f"{args.model_type}_DE_{args.window_size}"
@@ -394,7 +351,12 @@ def main():
         print("Running Leave-One-Subject-Out with Parallel Processing...")    
         processes = []
         subject_list = list(range(1, 16))
-        
+        # 2. Share Tensors in Memory (Crucial for multiprocessing)
+        X_tensor = torch.tensor(X, dtype=torch.float32).share_memory_()
+        y_tensor = torch.tensor(y, dtype=torch.long).share_memory_()
+        sub_tensor = torch.tensor(subjects, dtype=torch.long).share_memory_()
+        base_edge_index = get_knn_adjacency_matrix(LOCS_FILE, k=5).share_memory_()
+
         # Chunk the 15 subjects into groups of MAX_PARALLEL
         for i in range(0, 15, args.max_parallel):
             chunk = subject_list[i : i + args.max_parallel]
@@ -503,22 +465,23 @@ def main():
         print("  -> Strategy: Session Holdout (Train on S1+S2, Test on S3)")
         train_mask = (sessions == 1) | (sessions == 2)
         test_mask = (sessions == 3)
+
+        # 2. Share Tensors in Memory (Crucial for multiprocessing)
+        X_tensor = torch.tensor(X, dtype=torch.float32).to(DEVICE)
+        y_tensor = torch.tensor(y, dtype=torch.long).to(DEVICE)
+        sub_tensor = torch.tensor(subjects, dtype=torch.long).to(DEVICE)
+        base_edge_index = get_knn_adjacency_matrix(LOCS_FILE, k=5).to(DEVICE)
+
         
         X_train, y_train = X_tensor[train_mask], y_tensor[train_mask]
         X_test, y_test = X_tensor[test_mask], y_tensor[test_mask]
         
         train_loader = DataLoader(TensorDataset(X_train, y_train), 
                                   batch_size=BATCH_SIZE, 
-                                  shuffle=True,
-                                  num_workers=2,      # <--- INCREASE THIS
-                                  pin_memory=True,    # <--- ENABLE THIS
-                                  persistent_workers=True)
+                                  shuffle=True)
         test_loader = DataLoader(TensorDataset(X_test, y_test), 
                                  batch_size=BATCH_SIZE, 
-                                 shuffle=False,
-                                 num_workers=2,      # <--- INCREASE THIS
-                                 pin_memory=True,    # <--- ENABLE THIS
-                                 persistent_workers=True)
+                                 shuffle=False)
 
         run_name = f"Attempt_{run_id}_Phase2"
         results_dir = os.path.join("Results", model_name, run_name)
@@ -530,12 +493,12 @@ def main():
         os.makedirs(errors_dir, exist_ok=True)
 
         # --- UPDATE: Input Features = 10 (Mean + Variance Features) ---
-        IN_FEATURES = 11
+        IN_FEATURES = 10
         
         if args.model_type == 'GCN':
             print("Initializing Static GCN Model...")
-            model = GCN_DE_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=64, 
-                                num_classes=3, dropout_rate=0.5, num_layers=3).to(DEVICE)
+            model = GCN_DE_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=128, 
+                                num_classes=3, dropout_rate=0.5, num_layers=2, use_doubling=False).to(DEVICE)
         elif args.model_type == 'DGCNN':
             print("Initializing Dynamic DGCNN Model (Learnable Graph)...")
             model = DGCNN_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=64, 
@@ -544,6 +507,11 @@ def main():
             # This is the new model with var_B's Gatekeepers and var_C's Dynamic Brain
             model = Adaptive_DGCNN(num_nodes=62, in_features=IN_FEATURES, num_classes=3).to(DEVICE)
             print("Using Adaptive DGCNN (var_D) - The 83% Hybrid Architecture")
+        elif args.model_type == 'GraphSAGE':
+            print("Initializing GraphSAGE Model...")
+            model = GraphSAGE_EEG_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=64, 
+                                        num_classes=3, num_layers=3, aggregator='max', use_se=True, 
+                                        use_doubling=True, dropout_rate=0.5).to(DEVICE)
 
         # --- UPDATED OPTIMIZER: STRONG REGULARIZATION FOR GAMMA ---
         # We split parameters into "gamma" (needs strong regularization) and "rest".
@@ -562,8 +530,8 @@ def main():
             {'params': gamma_params, 'weight_decay': 1e-2}          # Strong L2 (force small weights)
         ], lr=LEARNING_RATE)
         
-        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', 
-                                                        factor=0.5, patience=PATIENCE)
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=PATIENCE)
+        # scheduler = optim.lr_scheduler.OneCycleLR(optimizer, max_lr=LEARNING_RATE, total_steps=EPOCHS)
         
         # --- STRATEGY: Class Weights ---
         # Double penalty for Negative (Class 0) to fix Recall
@@ -584,6 +552,7 @@ def main():
             results_dir=results_dir,
             params_dir=params_dir,
             errors_dir=errors_dir,
+            subject_tag="SessionHoldout",
             base_edge_index=base_edge_index,
             evaluate_fn=evaluate,
             hyperparams=args,
