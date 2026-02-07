@@ -25,9 +25,9 @@ import torch.multiprocessing as mp
 
 # --- Configuration ---
 LOCS_FILE = "utils/channel_62_pos.locs"
-BATCH_SIZE = 256
-EPOCHS = 120
-LEARNING_RATE = 0.001
+BATCH_SIZE = 64
+EPOCHS = 100
+LEARNING_RATE = 0.0002
 WEIGHT_DECAY = 1e-3 
 PATIENCE = 30
 # --- NEW: Sparsity Penalty for Adaptive Layer ---
@@ -35,7 +35,7 @@ L1_LAMBDA = 1e-4  # Force gamma parameters towards zero
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 CONFIG_FILE = "run_config.json"
 
-ROLLING_VAR_WINDOW = 9      # Window size for generating variance features
+ROLLING_VAR_WINDOW = 3      # Window size for generating variance features
 
 
 def get_next_run_id(window_size):
@@ -63,7 +63,7 @@ def get_args():
     parser = argparse.ArgumentParser(description="Train GCN-DE for EEG Emotion Recognition")
     parser.add_argument('--mode', type=str, default='sub_dep', choices=['sub_dep', 'sub_indep'],
                         help="Training mode: 'sub_dep' (Session split) or 'sub_indep' (LOSO)")
-    parser.add_argument('--window_size', type=str, default='1s', choices=['1s', '4s', '2s'],
+    parser.add_argument('--window_size', type=str, default='4s', choices=['1s', '4s', '2s'],
                         help="Feature window size: '1s' or '4s'")
     parser.add_argument('--model_type', type=str, default = 'GCN', 
                         choices=['GCN', 'DGCNN', 'ADAPTIVE_DGCNN', 'GraphSAGE'],
@@ -72,6 +72,10 @@ def get_args():
                         help="Maximum number of parallel processes")
     parser.add_argument('--use_overlap_logic', type=bool, default=False,
                         help="Whether to use overlap logic in GCN_DE_Model")
+    parser.add_argument('--use_se', type=bool, default=False, 
+                        help="Whether to use SE block in GCN_DE_Model")
+    parser.add_argument('--in_features', type=int, default=10,
+                        help="Number of input features per node")
     return parser.parse_args()
 
 def compute_rolling_variance(data, window_size=ROLLING_VAR_WINDOW):
@@ -161,18 +165,21 @@ def load_de_data(data_folder, label_file):
                         data = np.transpose(data, (2, 1, 0)) # (5, samples, 62) -> (62, samples, 5)
                 # -------------------------------
 
+                args = get_args() # Get args to check in_features setting
                 # --- RESTORED: Variance Calculation ---
-                # Compute rolling variance (Strategy V2)
-                data_var = compute_rolling_variance(data, window_size=ROLLING_VAR_WINDOW)
-                
-                # Stack: (62, samples, 5) + (62, samples, 5) -> (62, samples, 10)
-                data_final = np.concatenate([data, data_var], axis=2)
+                if args.in_features == 10:
+                    # Compute rolling variance (Strategy V2)
+                    data_var = compute_rolling_variance(data, window_size=ROLLING_VAR_WINDOW)
+                    
+                    # Stack: (62, samples, 5) + (62, samples, 5) -> (62, samples, 10)
+                    data_final = np.concatenate([data, data_var], axis=2)
 
-                # Transpose to (samples, 62, 10) for storage/model input
-                data_final = np.transpose(data_final, (1, 0, 2))
+                    # Transpose to (samples, 62, 10) for storage/model input
+                    data_final = np.transpose(data_final, (1, 0, 2))
 
                 # 5 ORIGINAL MEAN FEATURES ONLY (FOR ATTEMPT 18 REPRODUCTION)
-                # data_final = np.transpose(data, (1, 0, 2))
+                if args.in_features == 5:
+                    data_final = np.transpose(data, (1, 0, 2)) # (62, samples, 5) -> (samples, 62, 5)
 
                 num_samples = data_final.shape[0]
                 X_list.append(data_final)
@@ -252,22 +259,22 @@ def run_single_subject_fold(subject_id, args, X_full, y_full, sub_full,
     X_train, y_train = X_full[~test_mask], y_full[~test_mask]
     X_test, y_test = X_full[test_mask], y_full[test_mask]
 
-    IN_FEATURES = 10
+    IN_FEATURES = args.in_features  # This should be set to 10 for the new feature set, but can be overridden by args
 
     # 3. Model Initialization (Fresh weights, zero leakage)
     if args.model_type == 'GCN':
-        model = GCN_DE_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=128, 
-                             num_classes=3, num_layers=2, use_overlap_logic=args.use_overlap_logic).to(local_device)
+        model = GCN_DE_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=64, 
+                             num_classes=3, num_layers=3, use_se=args.use_se).to(local_device)
     elif args.model_type == 'DGCNN':
         model = DGCNN_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=128, 
-                            num_classes=3, num_layers=2).to(local_device)
+                            num_classes=3, num_layers=2, use_se=args.use_se).to(local_device)
     elif args.model_type == 'ADAPTIVE_DGCNN':
         model = Adaptive_DGCNN(num_nodes=62, in_features=IN_FEATURES, num_classes=3, hidden_dim=128,
-                               num_layers=3).to(local_device)
+                               num_layers=3, use_se=args.use_se).to(local_device)
     elif args.model_type == 'GraphSAGE':
         model = GraphSAGE_EEG_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=128, 
                                     num_classes=3, num_layers=2, aggregator='max', 
-                                    use_se=True, use_doubling=False, dropout_rate=0.5).to(local_device)
+                                    use_se=args.use_se, use_doubling=False, dropout_rate=0.5).to(local_device)
 
     # 4. Optimizer Setup (Split for Gamma regularization)
     gamma_params = [p for n, p in model.named_parameters() if 'static_norm.gamma' in n]
@@ -476,10 +483,15 @@ def main():
         X_train, y_train = X_tensor[train_mask], y_tensor[train_mask]
         X_test, y_test = X_tensor[test_mask], y_tensor[test_mask]
         
-        train_loader = DataLoader(TensorDataset(X_train, y_train), 
+        # ADD THIS: Extract subjects for train/test masks
+        sub_train = sub_tensor[train_mask]
+        sub_test = sub_tensor[test_mask]
+        
+        # UPDATE THIS: Pass sub_train/sub_test to TensorDataset
+        train_loader = DataLoader(TensorDataset(X_train, y_train, sub_train), 
                                   batch_size=BATCH_SIZE, 
                                   shuffle=True)
-        test_loader = DataLoader(TensorDataset(X_test, y_test), 
+        test_loader = DataLoader(TensorDataset(X_test, y_test, sub_test), 
                                  batch_size=BATCH_SIZE, 
                                  shuffle=False)
 
@@ -493,25 +505,25 @@ def main():
         os.makedirs(errors_dir, exist_ok=True)
 
         # --- UPDATE: Input Features = 10 (Mean + Variance Features) ---
-        IN_FEATURES = 10
+        IN_FEATURES = args.in_features  # This should be set to 10 for the new feature set, but can be overridden by args
         
         if args.model_type == 'GCN':
             print("Initializing Static GCN Model...")
-            model = GCN_DE_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=128, 
-                                num_classes=3, dropout_rate=0.5, num_layers=2, use_doubling=False).to(DEVICE)
+            model = GCN_DE_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=64, 
+                                num_classes=3, dropout_rate=0.5, num_layers=3, use_doubling=False, use_se=args.use_se).to(DEVICE)
         elif args.model_type == 'DGCNN':
             print("Initializing Dynamic DGCNN Model (Learnable Graph)...")
             model = DGCNN_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=64, 
-                                num_classes=3, dropout_rate=0.5).to(DEVICE)
+                                num_classes=3, dropout_rate=0.5, use_se=args.use_se).to(DEVICE)
         elif args.model_type == 'ADAPTIVE_DGCNN':
             # This is the new model with var_B's Gatekeepers and var_C's Dynamic Brain
-            model = Adaptive_DGCNN(num_nodes=62, in_features=IN_FEATURES, num_classes=3).to(DEVICE)
+            model = Adaptive_DGCNN(num_nodes=62, in_features=IN_FEATURES, num_classes=3, use_se=args.use_se).to(DEVICE)
             print("Using Adaptive DGCNN (var_D) - The 83% Hybrid Architecture")
         elif args.model_type == 'GraphSAGE':
             print("Initializing GraphSAGE Model...")
-            model = GraphSAGE_EEG_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=64, 
-                                        num_classes=3, num_layers=3, aggregator='max', use_se=True, 
-                                        use_doubling=True, dropout_rate=0.5).to(DEVICE)
+            model = GraphSAGE_EEG_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=128, 
+                                        num_classes=3, num_layers=2, aggregator='max', use_se=args.use_se, 
+                                        use_doubling=False, dropout_rate=0.5, num_subjects=15).to(DEVICE)
 
         # --- UPDATED OPTIMIZER: STRONG REGULARIZATION FOR GAMMA ---
         # We split parameters into "gamma" (needs strong regularization) and "rest".

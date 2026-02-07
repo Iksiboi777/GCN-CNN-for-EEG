@@ -336,14 +336,16 @@ class SEBlock_Global(nn.Module):
 class GCN_DE_Model(nn.Module):
     def __init__(self, num_nodes=62, in_features=10, hidden_dim=128, 
                  num_classes=3, dropout_rate=0.5, num_layers=2, num_subjects=15,
-                 use_overlap_logic=False, use_doubling=False): # Added num_subjects
+                 use_overlap_logic=False, use_doubling=False, use_se=False): # Added num_subjects
         super(GCN_DE_Model, self).__init__()
         self.use_overlap_logic = use_overlap_logic
+        self.use_se = use_se
         # 1. Static Adaptation (Silencing Bad Sensors)
         self.static_norm = AdaptiveGraphInputLayer(num_nodes, in_features)
         
-        # 2. Dynamic Adaptation (Focusing on Good Bands)
-        self.se_block = SEBlock(in_features, reduction=2)
+        # 2. THE SE BLOCK (Optional Band Attention)
+        if self.use_se:
+            self.se_block = SEBlock(in_features, reduction=2)
         
         # 3. GCN Layers
         self.layers = nn.ModuleList()
@@ -402,7 +404,8 @@ class GCN_DE_Model(nn.Module):
     def forward(self, x, edge_index, batch_index, subject_ids=None, return_embedding=False, return_attention=False):
         # 1. Preprocessing
         x = self.static_norm(x)
-        x = self.se_block(x, batch_index)
+        if self.use_se:
+            x = self.se_block(x, batch_index)
         
         # 2. Convolution
         for i, (conv, norm) in enumerate(zip(self.layers, self.norms)):

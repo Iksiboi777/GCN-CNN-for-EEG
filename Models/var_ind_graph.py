@@ -161,7 +161,7 @@ class SEBlock(nn.Module):
 
 class GraphSAGE_EEG_Model(nn.Module):
     def __init__(self, num_nodes=62, in_features=10, hidden_dim=128, num_classes=3, num_layers=2,
-                 aggregator='max', use_se=True, use_doubling=False, dropout_rate=0.5):
+                 aggregator='max', use_se=True, use_doubling=False, dropout_rate=0.5, num_subjects=15):
         super(GraphSAGE_EEG_Model, self).__init__()
         
         self.use_se = use_se
@@ -214,7 +214,12 @@ class GraphSAGE_EEG_Model(nn.Module):
             nn.Linear(final_embedding_dim // 2, num_classes)
         )
 
-    def forward(self, x, edge_index, batch, return_embedding=False):
+        # --- NEW: SUBJECT BIAS ---
+        self.subject_bias = nn.Embedding(num_subjects + 1, num_classes)
+        self.subject_bias.weight.data.fill_(0.0) # Init to zero
+        # -------------------------        
+
+    def forward(self, x, edge_index, batch, subject_ids=None, return_embedding=False):
         """
         Input x shape: (Batch*62, Features) or (Batch, 62, Features) 
         depending on how your training_utils delivers it.
@@ -247,6 +252,11 @@ class GraphSAGE_EEG_Model(nn.Module):
         graph_embedding = self.global_pool(x, batch)
         
         logits = self.classifier(graph_embedding)
+        
+        # --- NEW: APPLY BIAS ---
+        if subject_ids is not None:
+            logits = logits + self.subject_bias(subject_ids)
+        # -----------------------
         
         if return_embedding:
             return logits, graph_embedding
