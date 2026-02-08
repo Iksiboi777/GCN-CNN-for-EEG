@@ -25,11 +25,11 @@ import torch.multiprocessing as mp
 
 # --- Configuration ---
 LOCS_FILE = "utils/channel_62_pos.locs"
-BATCH_SIZE = 256
+BATCH_SIZE = 128
 EPOCHS = 100
-LEARNING_RATE = 0.001
+LEARNING_RATE = 0.00025
 WEIGHT_DECAY = 1e-3 
-PATIENCE = 25
+PATIENCE = 20
 # --- NEW: Sparsity Penalty for Adaptive Layer ---
 L1_LAMBDA = 1e-4  # Force gamma parameters towards zero
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -63,7 +63,7 @@ def get_args():
     parser = argparse.ArgumentParser(description="Train GCN-DE for EEG Emotion Recognition")
     parser.add_argument('--mode', type=str, default='sub_dep', choices=['sub_dep', 'sub_indep'],
                         help="Training mode: 'sub_dep' (Session split) or 'sub_indep' (LOSO)")
-    parser.add_argument('--window_size', type=str, default='1s', choices=['1s', '4s', '2s'],
+    parser.add_argument('--window_size', type=str, default='4s', choices=['1s', '4s', '2s'],
                         help="Feature window size: '1s' or '4s'")
     parser.add_argument('--model_type', type=str, default = 'ADAPTIVE_DGCNN', 
                         choices=['GCN', 'DGCNN', 'ADAPTIVE_DGCNN', 'GraphSAGE'],
