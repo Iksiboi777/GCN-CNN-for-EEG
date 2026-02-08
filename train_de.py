@@ -72,10 +72,10 @@ def get_args():
                         help="Maximum number of parallel processes")
     parser.add_argument('--use_overlap_logic', type=bool, default=False,
                         help="Whether to use overlap logic in GCN_DE_Model")
-    parser.add_argument('--use_se', type=bool, default=False, 
-                        help="Whether to use SE block in GCN_DE_Model")
-    parser.add_argument('--use_doubling', type=bool, default=True,
+    parser.add_argument('--use_doubling', type=bool, default=False,
                         help="Whether to use feature doubling in GCN_DE_Model")
+    parser.add_argument('--use_se', type=bool, default=True, 
+                        help="Whether to use SE block in GCN_DE_Model")
     parser.add_argument('--in_features', type=int, default=5, choices=[5, 10],
                         help="Number of input features per node")
     return parser.parse_args()
