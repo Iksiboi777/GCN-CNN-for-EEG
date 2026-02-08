@@ -1,0 +1,17 @@
+Model: GraphSAGE_EEG_Model
+Args: Namespace(mode='sub_dep', window_size='4s', model_type='GraphSAGE', max_parallel=4, use_overlap_logic=False, use_se=False, in_features=10)
+              precision    recall  f1-score   support
+
+    Negative       0.75      0.58      0.66      4170
+     Neutral       0.67      0.74      0.71      4110
+    Positive       0.84      0.95      0.89      4350
+
+    accuracy                           0.76     12630
+   macro avg       0.76      0.76      0.75     12630
+weighted avg       0.76      0.76      0.75     12630
+
+
+Confusion Matrix:
+[[2436 1352  382]
+ [ 677 3037  396]
+ [ 117  112 4121]]

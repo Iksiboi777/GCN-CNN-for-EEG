@@ -25,9 +25,9 @@ import torch.multiprocessing as mp
 
 # --- Configuration ---
 LOCS_FILE = "utils/channel_62_pos.locs"
-BATCH_SIZE = 64
+BATCH_SIZE = 128
 EPOCHS = 100
-LEARNING_RATE = 0.0002
+LEARNING_RATE = 0.0005
 WEIGHT_DECAY = 1e-3 
 PATIENCE = 30
 # --- NEW: Sparsity Penalty for Adaptive Layer ---
@@ -63,18 +63,18 @@ def get_args():
     parser = argparse.ArgumentParser(description="Train GCN-DE for EEG Emotion Recognition")
     parser.add_argument('--mode', type=str, default='sub_dep', choices=['sub_dep', 'sub_indep'],
                         help="Training mode: 'sub_dep' (Session split) or 'sub_indep' (LOSO)")
-    parser.add_argument('--window_size', type=str, default='4s', choices=['1s', '4s', '2s'],
+    parser.add_argument('--window_size', type=str, default='1s', choices=['1s', '4s', '2s'],
                         help="Feature window size: '1s' or '4s'")
-    parser.add_argument('--model_type', type=str, default = 'GCN', 
+    parser.add_argument('--model_type', type=str, default = 'ADAPTIVE_DGCNN', 
                         choices=['GCN', 'DGCNN', 'ADAPTIVE_DGCNN', 'GraphSAGE'],
                         help="Type of GCN model to use")
     parser.add_argument('--max_parallel', type=int, default=4, 
                         help="Maximum number of parallel processes")
     parser.add_argument('--use_overlap_logic', type=bool, default=False,
                         help="Whether to use overlap logic in GCN_DE_Model")
-    parser.add_argument('--use_se', type=bool, default=False, 
+    parser.add_argument('--use_se', type=bool, default=True, 
                         help="Whether to use SE block in GCN_DE_Model")
-    parser.add_argument('--in_features', type=int, default=10,
+    parser.add_argument('--in_features', type=int, default=10, choices=[5, 10],
                         help="Number of input features per node")
     return parser.parse_args()
 
@@ -509,15 +509,16 @@ def main():
         
         if args.model_type == 'GCN':
             print("Initializing Static GCN Model...")
-            model = GCN_DE_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=64, 
-                                num_classes=3, dropout_rate=0.5, num_layers=3, use_doubling=False, use_se=args.use_se).to(DEVICE)
+            model = GCN_DE_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=128, 
+                                num_classes=3, dropout_rate=0.5, num_layers=2, use_doubling=False, use_se=args.use_se).to(DEVICE)
         elif args.model_type == 'DGCNN':
             print("Initializing Dynamic DGCNN Model (Learnable Graph)...")
             model = DGCNN_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=64, 
                                 num_classes=3, dropout_rate=0.5, use_se=args.use_se).to(DEVICE)
         elif args.model_type == 'ADAPTIVE_DGCNN':
             # This is the new model with var_B's Gatekeepers and var_C's Dynamic Brain
-            model = Adaptive_DGCNN(num_nodes=62, in_features=IN_FEATURES, num_classes=3, use_se=args.use_se).to(DEVICE)
+            model = Adaptive_DGCNN(num_nodes=62, in_features=IN_FEATURES, num_classes=3, use_se=args.use_se,
+                                   hidden_dim=64, num_layers=3).to(DEVICE)
             print("Using Adaptive DGCNN (var_D) - The 83% Hybrid Architecture")
         elif args.model_type == 'GraphSAGE':
             print("Initializing GraphSAGE Model...")
@@ -542,8 +543,8 @@ def main():
             {'params': gamma_params, 'weight_decay': 1e-2}          # Strong L2 (force small weights)
         ], lr=LEARNING_RATE)
         
-        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=PATIENCE)
-        # scheduler = optim.lr_scheduler.OneCycleLR(optimizer, max_lr=LEARNING_RATE, total_steps=EPOCHS)
+        # scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=PATIENCE)
+        scheduler = optim.lr_scheduler.OneCycleLR(optimizer, max_lr=LEARNING_RATE, total_steps=EPOCHS)
         
         # --- STRATEGY: Class Weights ---
         # Double penalty for Negative (Class 0) to fix Recall

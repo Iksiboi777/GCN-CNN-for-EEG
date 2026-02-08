@@ -1,211 +1,160 @@
-# # ADAPTIVE SUBJECT BIAS MODEL
-
-
-# import torch
-# import torch.nn as nn
-# import torch.nn.functional as F
-# from torch_geometric.nn import DenseGCNConv, GlobalAttention
-# from phase2_layers import SubjectSpecificBatchNorm1d
-
-# class AdaptiveGraphInputLayer(nn.Module):
-#     """ The 'Pre-Amp'. Learned scaling factors for nodes. """
-#     def __init__(self, num_nodes=62, in_features=5):
-#         super(AdaptiveGraphInputLayer, self).__init__()
-#         self.gamma = nn.Parameter(torch.ones(1, num_nodes, in_features))
-#         self.beta = nn.Parameter(torch.zeros(1, num_nodes, in_features))
-#         self.initial_norm = nn.LayerNorm(in_features)
-
-#     def forward(self, x):
-#         x = self.initial_norm(x)
-#         return x * self.gamma + self.beta
-
-# class SEBlock(nn.Module):
-#     """ Squeeze-and-Excitation to weight frequency bands. """
-#     def __init__(self, channel, reduction=4):
-#         super(SEBlock, self).__init__()
-#         self.avg_pool = nn.AdaptiveAvgPool1d(1)
-#         self.fc = nn.Sequential(
-#             nn.Linear(channel, max(1, channel // reduction), bias=False),
-#             nn.ReLU(inplace=True),
-#             nn.Linear(max(1, channel // reduction), channel, bias=False),
-#             nn.Sigmoid()
-#         )
-
-#     def forward(self, x):
-#         b, n, f = x.size()
-#         y = x.transpose(1, 2)
-#         y = self.avg_pool(y).view(b, f)
-#         y = self.fc(y).view(b, 1, f)
-#         return x * y.expand_as(x)
-
-# class Adaptive_DGCNN(nn.Module):
-#     def __init__(self, num_nodes=62, in_features=5, hidden_dim=64, 
-#                  num_classes=3, dropout_rate=0.5, num_layers=3, num_subjects=15):
-#         super(Adaptive_DGCNN, self).__init__()
-        
-#         # 1. PHYSIOLOGICAL PRIORS
-#         self.adaptive_input = AdaptiveGraphInputLayer(num_nodes, in_features)
-#         self.se_block = SEBlock(in_features)
-
-#         # 2. DYNAMIC GRAPH LEARNERS
-#         self.weight_q = nn.Linear(in_features, hidden_dim)
-#         self.weight_k = nn.Linear(in_features, hidden_dim)
-        
-#         # 3. DENSE CONVOLUTIONS (Stacked)
-#         self.num_layers = num_layers
-#         self.convs = nn.ModuleList()
-#         self.bns = nn.ModuleList()
-        
-#         # Layers 2..N
-#         for _ in range(num_layers):
-#             self.convs.append(DenseGCNConv(hidden_dim, hidden_dim))
-#             self.bns.append(SubjectSpecificBatchNorm1d(num_nodes, num_subjects))
-
-#         # 4. SUBJECT-SPECIFIC BIAS (The "Adjustment Term")
-#         # Learned bias for each of the 15 subjects to shift probabilities 
-#         # (e.g., bias Subject 12 towards Neutral if they are prone to artifacts)
-#         self.subject_bias = nn.Embedding(num_subjects + 1, num_classes) # +1 for safe indexing
-#         self.subject_bias.weight.data.fill_(0.0) # Start with no bias
-
-#         # 5. POOLING & CLASSIFICATION
-#         self.att_gate = nn.Sequential(
-#             nn.Linear(hidden_dim, hidden_dim // 2),
-#             nn.ReLU(),
-#             nn.Linear(hidden_dim // 2, 1)
-#         )
-#         self.pool = GlobalAttention(gate_nn=self.att_gate)
-#         self.fc = nn.Linear(hidden_dim, num_classes)
-#         self.dropout = nn.Dropout(dropout_rate)
-
-#     def forward(self, x, subject_ids=None):
-#         # x: (Batch, Nodes, Features)
-        
-#         # --- PHASE 1: SENSOR CALIBRATION ---
-#         x = self.adaptive_input(x)
-#         x = self.se_block(x)
-        
-#         # --- PHASE 2: LEARN TOPOLOGY ---
-#         Q = self.weight_q(x)
-#         K = self.weight_k(x)
-#         A = torch.bmm(Q, K.transpose(1, 2))
-#         A = F.softmax(A / (x.shape[-1]**0.5), dim=-1)
-
-#         # --- PHASE 3: GRAPH CONVOLUTIONS ---
-#         for i in range(self.num_layers):
-#             x = self.convs[i](x, A)
-#             x = self.bns[i](x)
-#             x = F.relu(x)
-#             if i < self.num_layers - 1:
-#                 x = self.dropout(x)
-
-#         # --- PHASE 4: POOLING ---
-#         b, n, h = x.shape
-#         x_flat = x.reshape(-1, h)
-#         batch_idx = torch.arange(b, device=x.device).repeat_interleave(n)
-#         embedding = self.pool(x_flat, batch_idx)
-        
-#         logits = self.fc(embedding)
-
-#         # --- PHASE 5: ADAPTIVE BIAS ---
-#         if subject_ids is not None:
-#             # Shift the logits based on who the subject is
-#             bias = self.subject_bias(subject_ids)
-#             logits = logits + bias
-
-#         return logits
-
-
-# ATTEMPT 61 MODEL
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import DenseGCNConv
-from .phase2_layers import SubjectSpecificBatchNorm1d
+
+class AdaptiveGraphInputLayer(nn.Module):
+    """ 
+    The 'Pre-Amp'. Learned scaling factors for nodes. 
+    Normalizes input first to ensure stable gradients for gamma/beta.
+    """
+    def __init__(self, num_nodes=62, in_features=5):
+        super(AdaptiveGraphInputLayer, self).__init__()
+        # Shape: (1, 62, 5) to broadcast over batch
+        self.gamma = nn.Parameter(torch.ones(1, num_nodes, in_features))
+        self.beta = nn.Parameter(torch.zeros(1, num_nodes, in_features))
+        self.initial_norm = nn.LayerNorm(in_features)
+
+    def forward(self, x):
+        # x: (Batch, Nodes, Features)
+        x = self.initial_norm(x)
+        return x * self.gamma + self.beta
+
+class SEBlock(nn.Module):
+    """ 
+    Squeeze-and-Excitation to weight frequency bands (Dense).
+    Identifies which features (bands) are globally important for the current trial.
+    """
+    def __init__(self, channels, reduction=4):
+        super(SEBlock, self).__init__()
+        # Reduction logic ensures we don't scale down to 0 dimensions
+        reduced_dim = max(1, channels // reduction)
+        
+        self.fc = nn.Sequential(
+            nn.Linear(channels, reduced_dim, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Linear(reduced_dim, channels, bias=False),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        # x: (Batch, Nodes, Features)
+        
+        # 1. Squeeze: Global Average Pooling over Nodes -> (Batch, Features)
+        global_feat = x.mean(dim=1) 
+        
+        # 2. Excitation: Learn weights -> (Batch, 1, Features)
+        importance = self.fc(global_feat).unsqueeze(1) 
+        
+        # 3. Scale original input
+        return x * importance
 
 class Adaptive_DGCNN(nn.Module):
     def __init__(self, num_nodes=62, in_features=11, hidden_dim=64, 
-                 num_classes=3, num_subjects=15, num_layers=2):
+                 num_classes=3, num_subjects=15, num_layers=2, 
+                 use_se=True, use_doubling=False, dropout_rate=0.5):
         super(Adaptive_DGCNN, self).__init__()
         
         self.num_nodes = num_nodes
         self.num_layers = num_layers
+        self.use_se = use_se
         
-        # Standard input norm for dense (simplifies initial distribution)
-        self.input_ln = nn.LayerNorm(in_features) 
-
-        # AGLI
-        self.gamma = nn.Parameter(torch.ones(1, num_nodes, in_features))
-        self.beta = nn.Parameter(torch.zeros(1, num_nodes, in_features))
+        # 1. PHYSIOLOGICAL PRIORS (AGLI)
+        self.adaptive_input = AdaptiveGraphInputLayer(num_nodes, in_features)
         
-        # Dense SE Block
-        self.se_fc = nn.Sequential(
-            nn.Linear(in_features, in_features // 2),
-            nn.ReLU(),
-            nn.Linear(in_features // 2, in_features),
-            nn.Sigmoid()
-        )
+        # 2. SE BLOCK (Optional)
+        if self.use_se:
+            self.se_block = SEBlock(in_features)
 
-        # Dynamic Graph Learners
+        # 3. DYNAMIC GRAPH LEARNERS
+        # We learn one structure Q/K based on initial features
         self.weight_q = nn.Linear(in_features, hidden_dim)
         self.weight_k = nn.Linear(in_features, hidden_dim)
         
-        # Loop for Dense GCN Layers
+        # 4. DENSE CONVOLUTIONS (Stacked Loop)
         self.convs = nn.ModuleList()
         self.norms = nn.ModuleList()
 
+        current_input_dim = in_features
+        current_hidden_dim = hidden_dim
+
         for i in range(num_layers):
-            in_dim = in_features if i == 0 else hidden_dim
-            self.convs.append(DenseGCNConv(in_dim, hidden_dim))
-            # SSBN expects (N, C, L), so we use hidden_dim as 'features'
-            self.norms.append(SubjectSpecificBatchNorm1d(hidden_dim, num_subjects))
+            # i=0 input is raw features, else previous hidden
+            
+            self.convs.append(DenseGCNConv(current_input_dim, current_hidden_dim))
+            # BatchNorm1d expects (Batch, Channels, Length). 
+            # In our case 'Channels' = Hidden Dim.
+            self.norms.append(nn.BatchNorm1d(current_hidden_dim))
+            
+            # Preparation for NEXT layer
+            current_input_dim = current_hidden_dim
+            if use_doubling:
+                current_hidden_dim = current_hidden_dim * 2
+            # else: current_hidden_dim stays fixed
         
-        # Global Attention Pool Gate
-        self.gate = nn.Linear(hidden_dim, 1)
+        self.dropout = nn.Dropout(dropout_rate)
         
-        self.fc = nn.Linear(hidden_dim, num_classes)
+        # Final embedding size is the output of the last layer
+        final_embedding_dim = current_input_dim
+
+        # 5. POOLING & CLASSIFICATION
+        # Attention Pooling Mechanism
+        self.gate = nn.Linear(final_embedding_dim, 1)
+        
+        self.fc = nn.Linear(final_embedding_dim, num_classes)
+        
+        # 6. SUBJECT BIAS
+        # +1 to handle cases where subject_id might not be passed or OOB
+        # Acts as a "baseline removal" tool
         self.subject_bias = nn.Embedding(num_subjects + 1, num_classes)
         self.subject_bias.weight.data.fill_(0.0)
 
-    def forward(self, x, subject_ids_graph, return_embedding=False):
-        # x: (Batch, Nodes, Features)
+    def forward(self, x, subject_ids=None, return_embedding=False):
+        """
+        x: (Batch, Nodes, Features) - Dense Input
+        subject_ids: (Batch,) - Optional
+        """
+        # --- PHASE 1: SENSOR CALIBRATION ---
+        x = self.adaptive_input(x)
         
-        x = self.input_ln(x)
-        x = x * self.gamma + self.beta
+        if self.use_se:
+            x = self.se_block(x)
         
-        # SE Block
-        global_feat = x.mean(dim=1) 
-        importance = self.se_fc(global_feat).unsqueeze(1) 
-        x = x * importance
-        
-        # LEARN ADJACENCY ONCE (Based on calibrated input)
+        # --- PHASE 2: LEARN TOPOLOGY ---
+        # Calculate Adjacency Matrix A dynamically
         Q = self.weight_q(x)
         K = self.weight_k(x)
+        # (B, N, H) x (B, H, N) -> (B, N, N)
         A = torch.bmm(Q, K.transpose(1, 2))
-        A = F.softmax(A / (x.shape[-1]**0.5), dim=-1) # (Batch, Nodes, Nodes)
-        
-        # Convolution Loop
+        A = F.softmax(A / (x.shape[-1]**0.5), dim=-1)
+
+        # --- PHASE 3: GRAPH CONVOLUTIONS ---
         for i in range(self.num_layers):
-            x = self.convs[i](x, A) # Output: (B, Nodes, Hidden)
+            x = self.convs[i](x, A) # (Batch, Nodes, Hidden)
             
-            # --- SSBN TRICK for Dense ---
-            # SSBN wants (Batch, Features, Nodes) to normalize Features regardless of Node pos
-            x = x.transpose(1, 2)  # (B, Hidden, Nodes)
-            x = self.norms[i](x, subject_ids_graph) # Normalize using GRAPH IDs (One ID per sample in batch)
-            x = x.transpose(1, 2)  # Back to (B, Nodes, Hidden)
-            # ---------------------------
+            # BatchNorm expects (N, C, L). We have (B, N, H).
+            # Treating 'Hidden' as 'Channels' (C) and 'Nodes' as 'Length' (L)
+            x_perm = x.transpose(1, 2) # (Batch, Hidden, Nodes)
+            x_perm = self.norms[i](x_perm)
+            x = x_perm.transpose(1, 2) # Back to (Batch, Nodes, Hidden)
             
             x = F.relu(x)
             if i < self.num_layers - 1:
-                x = F.dropout(x, p=0.5, training=self.training)
-        
-        # Pooling
+                x = self.dropout(x)
+
+        # --- PHASE 4: POOLING ---
+        # Attention Pooling
         atten_scores = torch.tanh(self.gate(x)) # (B, N, 1)
         atten_weights = F.softmax(atten_scores, dim=1)
+        
+        # Weighted sum of nodes
         embedding = (x * atten_weights).sum(dim=1) # (B, H)
         
         logits = self.fc(embedding)
-        logits = logits + self.subject_bias(subject_ids_graph)
+
+        # --- PHASE 5: ADAPTIVE BIAS ---
+        if subject_ids is not None:
+            logits = logits + self.subject_bias(subject_ids)
         
         if return_embedding:
             return logits, embedding

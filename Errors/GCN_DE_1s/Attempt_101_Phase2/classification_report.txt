@@ -1,0 +1,17 @@
+Model: GCN_DE_Model - Attempt 101
+Args: Namespace(mode='sub_dep', window_size='1s', model_type='GCN', max_parallel=4, use_overlap_logic=False)
+              precision    recall  f1-score   support
+
+    Negative       0.81      0.76      0.78     16800
+     Neutral       0.79      0.82      0.80     16560
+    Positive       0.90      0.92      0.91     17550
+
+    accuracy                           0.83     50910
+   macro avg       0.83      0.83      0.83     50910
+weighted avg       0.83      0.83      0.83     50910
+
+
+Confusion Matrix:
+[[12716  3122   962]
+ [ 2122 13503   935]
+ [  814   539 16197]]
