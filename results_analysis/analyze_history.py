@@ -212,33 +212,33 @@ def main():
         plt.savefig(os.path.join(results_dir, "error_heatmap.png"))
         print("Saved error_heatmap.png")
 
-    # --- 3. t-SNE Clustering Evolution ---
-    print("Generating t-SNE Clustering...")
-    avail_epochs = sorted(embeddings_history.keys())
-    if not avail_epochs:
-        print("No embeddings found in history.")
-    else:
-        selected_epochs = [avail_epochs[0], avail_epochs[len(avail_epochs)//2], avail_epochs[-1]]
-        selected_epochs = sorted(list(set(selected_epochs)))
+    # # --- 3. t-SNE Clustering Evolution ---
+    # print("Generating t-SNE Clustering...")
+    # avail_epochs = sorted(embeddings_history.keys())
+    # if not avail_epochs:
+    #     print("No embeddings found in history.")
+    # else:
+    #     selected_epochs = [avail_epochs[0], avail_epochs[len(avail_epochs)//2], avail_epochs[-1]]
+    #     selected_epochs = sorted(list(set(selected_epochs)))
         
-        fig, axes = plt.subplots(1, len(selected_epochs), figsize=(20, 6))
-        if len(selected_epochs) == 1: axes = [axes] 
+    #     fig, axes = plt.subplots(1, len(selected_epochs), figsize=(20, 6))
+    #     if len(selected_epochs) == 1: axes = [axes] 
         
-        indices = np.random.choice(len(y_true), min(2000, len(y_true)), replace=False)
+    #     indices = np.random.choice(len(y_true), min(2000, len(y_true)), replace=False)
         
-        for i, epoch in enumerate(selected_epochs):
-            emb = np.array(embeddings_history[epoch])[indices]
-            labels = np.array(y_true_arr)[indices]
+    #     for i, epoch in enumerate(selected_epochs):
+    #         emb = np.array(embeddings_history[epoch])[indices]
+    #         labels = np.array(y_true_arr)[indices]
             
-            tsne = TSNE(n_components=2, random_state=42, perplexity=30)
-            emb_2d = tsne.fit_transform(emb)
+    #         tsne = TSNE(n_components=2, random_state=42, perplexity=30)
+    #         emb_2d = tsne.fit_transform(emb)
             
-            scatter = axes[i].scatter(emb_2d[:, 0], emb_2d[:, 1], c=labels, cmap='viridis', alpha=0.6, s=10)
-            axes[i].set_title(f"Epoch {epoch+1} Embeddings")
+    #         scatter = axes[i].scatter(emb_2d[:, 0], emb_2d[:, 1], c=labels, cmap='viridis', alpha=0.6, s=10)
+    #         axes[i].set_title(f"Epoch {epoch+1} Embeddings")
             
-        plt.legend(handles=scatter.legend_elements()[0], labels=class_names)
-        plt.tight_layout()
-        plt.savefig(os.path.join(results_dir, "tsne_evolution.png"))
+        # plt.legend(handles=scatter.legend_elements()[0], labels=class_names)
+        # plt.tight_layout()
+        # plt.savefig(os.path.join(results_dir, "tsne_evolution.png"))
         # plt.show()
 
 if __name__ == "__main__":
