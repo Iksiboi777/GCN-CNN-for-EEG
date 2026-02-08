@@ -66,6 +66,10 @@ Results/ADAPTIVE_DGCNN_DE_1s/*
 !Results/ADAPTIVE_DGCNN_DE_1s/Attempt_52*/
 !Results/ADAPTIVE_DGCNN_DE_1s/Attempt_53*/
 !Results/ADAPTIVE_DGCNN_DE_1s/Attempt_58*/
+!Results/ADAPTIVE_DGCNN_DE_1s/Attempt_116*/
+!Results/ADAPTIVE_DGCNN_DE_1s/Attempt_123*/
+!Results/ADAPTIVE_DGCNN_DE_1s/Attempt_124*/
+!Results/ADAPTIVE_DGCNN_DE_1s/Attempt_125*/
 
 
 
@@ -171,6 +175,13 @@ Errors/ADAPTIVE_DGCNN_DE_1s/*
 !Errors/ADAPTIVE_DGCNN_DE_1s/Attempt_52*/
 !Errors/ADAPTIVE_DGCNN_DE_1s/Attempt_53*/
 !Errors/ADAPTIVE_DGCNN_DE_1s/Attempt_58*/
+!Errors/ADAPTIVE_DGCNN_DE_1s/Attempt_116*/
+!Errors/ADAPTIVE_DGCNN_DE_1s/Attempt_123*/
+!Errors/ADAPTIVE_DGCNN_DE_1s/Attempt_124*/
+!Errors/ADAPTIVE_DGCNN_DE_1s/Attempt_125*/
+
+
+
 
 # --- GCN_DE_1s (Attempts 54-57) ---
 !Errors/GCN_DE_1s/

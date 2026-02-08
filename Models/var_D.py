@@ -50,7 +50,7 @@ class SEBlock(nn.Module):
         return x * importance
 
 class Adaptive_DGCNN(nn.Module):
-    def __init__(self, num_nodes=62, in_features=11, hidden_dim=64, 
+    def __init__(self, num_nodes=62, in_features=10, hidden_dim=128, 
                  num_classes=3, num_subjects=15, num_layers=2, 
                  use_se=True, use_doubling=False, dropout_rate=0.5):
         super(Adaptive_DGCNN, self).__init__()
@@ -58,13 +58,14 @@ class Adaptive_DGCNN(nn.Module):
         self.num_nodes = num_nodes
         self.num_layers = num_layers
         self.use_se = use_se
+        self.use_doubling = use_doubling
         
         # 1. PHYSIOLOGICAL PRIORS (AGLI)
         self.adaptive_input = AdaptiveGraphInputLayer(num_nodes, in_features)
         
         # 2. SE BLOCK (Optional)
         if self.use_se:
-            self.se_block = SEBlock(in_features)
+            self.se_block = SEBlock(in_features, reduction=2)
 
         # 3. DYNAMIC GRAPH LEARNERS
         # We learn one structure Q/K based on initial features
@@ -88,7 +89,7 @@ class Adaptive_DGCNN(nn.Module):
             
             # Preparation for NEXT layer
             current_input_dim = current_hidden_dim
-            if use_doubling:
+            if self.use_doubling:
                 current_hidden_dim = current_hidden_dim * 2
             # else: current_hidden_dim stays fixed
         

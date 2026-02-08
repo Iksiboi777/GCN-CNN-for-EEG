@@ -25,11 +25,11 @@ import torch.multiprocessing as mp
 
 # --- Configuration ---
 LOCS_FILE = "utils/channel_62_pos.locs"
-BATCH_SIZE = 128
+BATCH_SIZE = 256
 EPOCHS = 100
-LEARNING_RATE = 0.0005
+LEARNING_RATE = 0.001
 WEIGHT_DECAY = 1e-3 
-PATIENCE = 30
+PATIENCE = 25
 # --- NEW: Sparsity Penalty for Adaptive Layer ---
 L1_LAMBDA = 1e-4  # Force gamma parameters towards zero
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -65,16 +65,18 @@ def get_args():
                         help="Training mode: 'sub_dep' (Session split) or 'sub_indep' (LOSO)")
     parser.add_argument('--window_size', type=str, default='1s', choices=['1s', '4s', '2s'],
                         help="Feature window size: '1s' or '4s'")
-    parser.add_argument('--model_type', type=str, default = 'GraphSAGE', 
+    parser.add_argument('--model_type', type=str, default = 'ADAPTIVE_DGCNN', 
                         choices=['GCN', 'DGCNN', 'ADAPTIVE_DGCNN', 'GraphSAGE'],
                         help="Type of GCN model to use")
     parser.add_argument('--max_parallel', type=int, default=4, 
                         help="Maximum number of parallel processes")
     parser.add_argument('--use_overlap_logic', type=bool, default=False,
                         help="Whether to use overlap logic in GCN_DE_Model")
-    parser.add_argument('--use_se', type=bool, default=True, 
+    parser.add_argument('--use_se', type=bool, default=False, 
                         help="Whether to use SE block in GCN_DE_Model")
-    parser.add_argument('--in_features', type=int, default=10, choices=[5, 10],
+    parser.add_argument('--use_doubling', type=bool, default=True,
+                        help="Whether to use feature doubling in GCN_DE_Model")
+    parser.add_argument('--in_features', type=int, default=5, choices=[5, 10],
                         help="Number of input features per node")
     return parser.parse_args()
 
@@ -264,17 +266,17 @@ def run_single_subject_fold(subject_id, args, X_full, y_full, sub_full,
     # 3. Model Initialization (Fresh weights, zero leakage)
     if args.model_type == 'GCN':
         model = GCN_DE_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=64, 
-                             num_classes=3, num_layers=3, use_se=args.use_se).to(local_device)
+                             num_classes=3, num_layers=3, use_se=args.use_se, use_doubling=args.use_doubling).to(local_device)
     elif args.model_type == 'DGCNN':
         model = DGCNN_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=128, 
-                            num_classes=3, num_layers=2, use_se=args.use_se).to(local_device)
+                            num_classes=3, num_layers=2, use_se=args.use_se, use_doubling=args.use_doubling).to(local_device)
     elif args.model_type == 'ADAPTIVE_DGCNN':
         model = Adaptive_DGCNN(num_nodes=62, in_features=IN_FEATURES, num_classes=3, hidden_dim=128,
-                               num_layers=3, use_se=args.use_se).to(local_device)
+                               num_layers=3, use_se=args.use_se, use_doubling=args.use_doubling).to(local_device)
     elif args.model_type == 'GraphSAGE':
         model = GraphSAGE_EEG_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=128, 
                                     num_classes=3, num_layers=2, aggregator='max', 
-                                    use_se=args.use_se, use_doubling=False, dropout_rate=0.5).to(local_device)
+                                    use_se=args.use_se, use_doubling=args.use_doubling, dropout_rate=0.5).to(local_device)
 
     # 4. Optimizer Setup (Split for Gamma regularization)
     gamma_params = [p for n, p in model.named_parameters() if 'static_norm.gamma' in n]
@@ -510,21 +512,21 @@ def main():
         if args.model_type == 'GCN':
             print("Initializing Static GCN Model...")
             model = GCN_DE_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=128, 
-                                num_classes=3, dropout_rate=0.5, num_layers=2, use_doubling=False, use_se=args.use_se).to(DEVICE)
+                                num_classes=3, dropout_rate=0.5, num_layers=2, use_doubling=args.use_doubling, use_se=args.use_se).to(DEVICE)
         elif args.model_type == 'DGCNN':
             print("Initializing Dynamic DGCNN Model (Learnable Graph)...")
-            model = DGCNN_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=64, 
+            model = DGCNN_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=128, num_layers=2, use_doubling=args.use_doubling,
                                 num_classes=3, dropout_rate=0.5, use_se=args.use_se).to(DEVICE)
         elif args.model_type == 'ADAPTIVE_DGCNN':
             # This is the new model with var_B's Gatekeepers and var_C's Dynamic Brain
             model = Adaptive_DGCNN(num_nodes=62, in_features=IN_FEATURES, num_classes=3, use_se=args.use_se,
-                                   hidden_dim=64, num_layers=3).to(DEVICE)
+                                   hidden_dim=128, num_layers=2, use_doubling=args.use_doubling).to(DEVICE)
             print("Using Adaptive DGCNN (var_D) - The 83% Hybrid Architecture")
         elif args.model_type == 'GraphSAGE':
             print("Initializing GraphSAGE Model...")
             model = GraphSAGE_EEG_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=128, 
                                         num_classes=3, num_layers=2, aggregator='max', use_se=args.use_se, 
-                                        use_doubling=False, dropout_rate=0.5, num_subjects=15).to(DEVICE)
+                                        use_doubling=args.use_doubling, dropout_rate=0.5, num_subjects=15).to(DEVICE)
 
         # --- UPDATED OPTIMIZER: STRONG REGULARIZATION FOR GAMMA ---
         # We split parameters into "gamma" (needs strong regularization) and "rest".
