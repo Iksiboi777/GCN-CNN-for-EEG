@@ -1,0 +1,310 @@
+============================================================
+      COMPREHENSIVE LOSO ANALYSIS: Attempt_125_LOSO_Parallel
+============================================================
+
+--- 1. CONFIGURATION & HYPERPARAMETERS ---
+Model                    : GraphSAGE_DE_4s
+Attempt                  : Attempt_125_LOSO_Parallel
+Structure                : Batch-Parallel LOSO
+run_counter              : 1
+run_counter_4s           : 125
+run_counter_1s           : 140
+1s                       : 5
+global_run_counter_1s    : 1
+run_counter_GCN          : 4
+run_counter_2s           : 5
+run_counter_CNNGCN_Raw   : 14
+
+--- 2. GLOBAL PERFORMANCE SUMMARY ---
+Global Mean Accuracy      : 75.74%
+Standard Deviation        : 9.72%
+Best Subject              : ID 15 (97.47%)
+Worst Subject             : ID 7 (61.40%)
+
+Global Classification Report:
+              precision    recall  f1-score   support
+
+    Negative       0.72      0.70      0.71     12510
+     Neutral       0.72      0.68      0.70     12330
+    Positive       0.82      0.89      0.85     13050
+
+    accuracy                           0.76     37890
+   macro avg       0.75      0.76      0.75     37890
+weighted avg       0.75      0.76      0.76     37890
+
+Global Confusion Matrix:
+[[ 8724,  2710,  1076],
+ [ 2533,  8391,  1406],
+ [  936,   532, 11582]]
+
+--- 3. INDIVIDUAL SUBJECT MATRICES & REPORTS ---
+
+==================== SUBJECT 1 (Acc: 79.77%) ====================
+Confusion Matrix:
+[[610, 174,  50],
+ [229, 548,  45],
+ [ 13,   0, 857]]
+
+Classification Report:
+              precision    recall  f1-score   support
+
+           0       0.72      0.73      0.72       834
+           1       0.76      0.67      0.71       822
+           2       0.90      0.99      0.94       870
+
+    accuracy                           0.80      2526
+   macro avg       0.79      0.79      0.79      2526
+weighted avg       0.79      0.80      0.79      2526
+
+
+==================== SUBJECT 2 (Acc: 65.56%) ====================
+Confusion Matrix:
+[[676, 107,  51],
+ [152, 548, 122],
+ [ 96, 342, 432]]
+
+Classification Report:
+              precision    recall  f1-score   support
+
+           0       0.73      0.81      0.77       834
+           1       0.55      0.67      0.60       822
+           2       0.71      0.50      0.59       870
+
+    accuracy                           0.66      2526
+   macro avg       0.67      0.66      0.65      2526
+weighted avg       0.67      0.66      0.65      2526
+
+
+==================== SUBJECT 3 (Acc: 72.88%) ====================
+Confusion Matrix:
+[[550, 120, 164],
+ [100, 590, 132],
+ [ 87,  82, 701]]
+
+Classification Report:
+              precision    recall  f1-score   support
+
+           0       0.75      0.66      0.70       834
+           1       0.74      0.72      0.73       822
+           2       0.70      0.81      0.75       870
+
+    accuracy                           0.73      2526
+   macro avg       0.73      0.73      0.73      2526
+weighted avg       0.73      0.73      0.73      2526
+
+
+==================== SUBJECT 4 (Acc: 62.27%) ====================
+Confusion Matrix:
+[[311, 203, 320],
+ [144, 412, 266],
+ [  0,  20, 850]]
+
+Classification Report:
+              precision    recall  f1-score   support
+
+           0       0.68      0.37      0.48       834
+           1       0.65      0.50      0.57       822
+           2       0.59      0.98      0.74       870
+
+    accuracy                           0.62      2526
+   macro avg       0.64      0.62      0.60      2526
+weighted avg       0.64      0.62      0.60      2526
+
+
+==================== SUBJECT 5 (Acc: 76.84%) ====================
+Confusion Matrix:
+[[738,  77,  19],
+ [232, 435, 155],
+ [102,   0, 768]]
+
+Classification Report:
+              precision    recall  f1-score   support
+
+           0       0.69      0.88      0.77       834
+           1       0.85      0.53      0.65       822
+           2       0.82      0.88      0.85       870
+
+    accuracy                           0.77      2526
+   macro avg       0.78      0.77      0.76      2526
+weighted avg       0.78      0.77      0.76      2526
+
+
+==================== SUBJECT 6 (Acc: 89.15%) ====================
+Confusion Matrix:
+[[776,  58,   0],
+ [158, 606,  58],
+ [  0,   0, 870]]
+
+Classification Report:
+              precision    recall  f1-score   support
+
+           0       0.83      0.93      0.88       834
+           1       0.91      0.74      0.82       822
+           2       0.94      1.00      0.97       870
+
+    accuracy                           0.89      2526
+   macro avg       0.89      0.89      0.89      2526
+weighted avg       0.89      0.89      0.89      2526
+
+
+==================== SUBJECT 7 (Acc: 61.40%) ====================
+Confusion Matrix:
+[[388, 395,  51],
+ [268, 400, 154],
+ [107,   0, 763]]
+
+Classification Report:
+              precision    recall  f1-score   support
+
+           0       0.51      0.47      0.49       834
+           1       0.50      0.49      0.49       822
+           2       0.79      0.88      0.83       870
+
+    accuracy                           0.61      2526
+   macro avg       0.60      0.61      0.60      2526
+weighted avg       0.60      0.61      0.61      2526
+
+
+==================== SUBJECT 8 (Acc: 78.07%) ====================
+Confusion Matrix:
+[[644, 139,  51],
+ [364, 458,   0],
+ [  0,   0, 870]]
+
+Classification Report:
+              precision    recall  f1-score   support
+
+           0       0.64      0.77      0.70       834
+           1       0.77      0.56      0.65       822
+           2       0.94      1.00      0.97       870
+
+    accuracy                           0.78      2526
+   macro avg       0.78      0.78      0.77      2526
+weighted avg       0.79      0.78      0.78      2526
+
+
+==================== SUBJECT 9 (Acc: 86.58%) ====================
+Confusion Matrix:
+[[719,  56,  59],
+ [186, 609,  27],
+ [ 11,   0, 859]]
+
+Classification Report:
+              precision    recall  f1-score   support
+
+           0       0.78      0.86      0.82       834
+           1       0.92      0.74      0.82       822
+           2       0.91      0.99      0.95       870
+
+    accuracy                           0.87      2526
+   macro avg       0.87      0.86      0.86      2526
+weighted avg       0.87      0.87      0.86      2526
+
+
+==================== SUBJECT 10 (Acc: 72.21%) ====================
+Confusion Matrix:
+[[580, 254,   0],
+ [282, 540,   0],
+ [107,  59, 704]]
+
+Classification Report:
+              precision    recall  f1-score   support
+
+           0       0.60      0.70      0.64       834
+           1       0.63      0.66      0.64       822
+           2       1.00      0.81      0.89       870
+
+    accuracy                           0.72      2526
+   macro avg       0.74      0.72      0.73      2526
+weighted avg       0.75      0.72      0.73      2526
+
+
+==================== SUBJECT 11 (Acc: 80.88%) ====================
+Confusion Matrix:
+[[550, 233,  51],
+ [199, 623,   0],
+ [  0,   0, 870]]
+
+Classification Report:
+              precision    recall  f1-score   support
+
+           0       0.73      0.66      0.69       834
+           1       0.73      0.76      0.74       822
+           2       0.94      1.00      0.97       870
+
+    accuracy                           0.81      2526
+   macro avg       0.80      0.81      0.80      2526
+weighted avg       0.80      0.81      0.81      2526
+
+
+==================== SUBJECT 12 (Acc: 70.31%) ====================
+Confusion Matrix:
+[[710,  68,  56],
+ [ 39, 526, 257],
+ [301,  29, 540]]
+
+Classification Report:
+              precision    recall  f1-score   support
+
+           0       0.68      0.85      0.75       834
+           1       0.84      0.64      0.73       822
+           2       0.63      0.62      0.63       870
+
+    accuracy                           0.70      2526
+   macro avg       0.72      0.70      0.70      2526
+weighted avg       0.72      0.70      0.70      2526
+
+
+==================== SUBJECT 13 (Acc: 68.29%) ====================
+Confusion Matrix:
+[[218, 514, 102],
+ [173, 637,  12],
+ [  0,   0, 870]]
+
+Classification Report:
+              precision    recall  f1-score   support
+
+           0       0.56      0.26      0.36       834
+           1       0.55      0.77      0.65       822
+           2       0.88      1.00      0.94       870
+
+    accuracy                           0.68      2526
+   macro avg       0.67      0.68      0.65      2526
+weighted avg       0.67      0.68      0.65      2526
+
+
+==================== SUBJECT 14 (Acc: 74.39%) ====================
+Confusion Matrix:
+[[484, 248, 102],
+ [  7, 637, 178],
+ [112,   0, 758]]
+
+Classification Report:
+              precision    recall  f1-score   support
+
+           0       0.80      0.58      0.67       834
+           1       0.72      0.77      0.75       822
+           2       0.73      0.87      0.79       870
+
+    accuracy                           0.74      2526
+   macro avg       0.75      0.74      0.74      2526
+weighted avg       0.75      0.74      0.74      2526
+
+
+==================== SUBJECT 15 (Acc: 97.47%) ====================
+Confusion Matrix:
+[[770,  64,   0],
+ [  0, 822,   0],
+ [  0,   0, 870]]
+
+Classification Report:
+              precision    recall  f1-score   support
+
+           0       1.00      0.92      0.96       834
+           1       0.93      1.00      0.96       822
+           2       1.00      1.00      1.00       870
+
+    accuracy                           0.97      2526
+   macro avg       0.98      0.97      0.97      2526
+weighted avg       0.98      0.97      0.97      2526
+

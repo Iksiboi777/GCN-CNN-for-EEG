@@ -291,8 +291,8 @@ def main():
         "use_doubling": False,          # True/False
         "use_overlap_logic": False,     # True/False
         "mode": "sub_indep",            # 'sub_dep' or 'sub_indep'
-        "batch_size": 2048,
-        "epochs": 100,
+        "batch_size": 128,
+        "epochs": 60,
         "learning_rate": 0.0005,
         "patience": 20 
     }
