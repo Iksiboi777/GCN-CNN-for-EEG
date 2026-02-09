@@ -7,8 +7,8 @@ from sklearn.metrics import classification_report, confusion_matrix, accuracy_sc
 
 # --- CONFIGURATION ---
 # Adjust these to match the specific run you want to analyze
-MODEL_NAME = "GRAPH_SAGE_DE_4s"
-ATTEMPT_ID = "Attempt_72_LOSO_Parallel"
+MODEL_NAME = "GraphSAGE_DE_4s"
+ATTEMPT_ID = "Attempt_125_LOSO_Parallel"
 
 # Directories based on your TrainingManager logic
 RESULTS_ROOT = f"Results/{MODEL_NAME}/{ATTEMPT_ID}" 

@@ -15,6 +15,7 @@ from Models.var_C import DGCNN_Model
 from Models.var_D import Adaptive_DGCNN
 from Models.var_ind_graph import GraphSAGE_EEG_Model
 from Models.graph_construction import get_knn_adjacency_matrix
+from torch_geometric.utils import to_dense_adj
 from utils.training_utils import train_model_with_interrupt, evaluate
 from utils.feature_engineering import SmartPreprocessor, get_standard_channel_names
 # from sklearn.preprocessing import RobustScaler # REMOVED to match Attempt 18
@@ -26,8 +27,8 @@ import torch.multiprocessing as mp
 # --- Configuration ---
 LOCS_FILE = "utils/channel_62_pos.locs"
 BATCH_SIZE = 128
-EPOCHS = 100
-LEARNING_RATE = 0.00025
+EPOCHS = 60
+LEARNING_RATE = 0.0005
 WEIGHT_DECAY = 1e-3 
 PATIENCE = 20
 # --- NEW: Sparsity Penalty for Adaptive Layer ---
@@ -61,22 +62,22 @@ def get_next_run_id(window_size):
 
 def get_args():
     parser = argparse.ArgumentParser(description="Train GCN-DE for EEG Emotion Recognition")
-    parser.add_argument('--mode', type=str, default='sub_dep', choices=['sub_dep', 'sub_indep'],
+    parser.add_argument('--mode', type=str, default='sub_indep', choices=['sub_dep', 'sub_indep'],
                         help="Training mode: 'sub_dep' (Session split) or 'sub_indep' (LOSO)")
     parser.add_argument('--window_size', type=str, default='4s', choices=['1s', '4s', '2s'],
                         help="Feature window size: '1s' or '4s'")
-    parser.add_argument('--model_type', type=str, default = 'ADAPTIVE_DGCNN', 
+    parser.add_argument('--model_type', type=str, default = 'GraphSAGE', 
                         choices=['GCN', 'DGCNN', 'ADAPTIVE_DGCNN', 'GraphSAGE'],
                         help="Type of GCN model to use")
-    parser.add_argument('--max_parallel', type=int, default=4, 
+    parser.add_argument('--max_parallel', type=int, default=5, 
                         help="Maximum number of parallel processes")
     parser.add_argument('--use_overlap_logic', type=bool, default=False,
                         help="Whether to use overlap logic in GCN_DE_Model")
     parser.add_argument('--use_doubling', type=bool, default=False,
                         help="Whether to use feature doubling in GCN_DE_Model")
-    parser.add_argument('--use_se', type=bool, default=True, 
+    parser.add_argument('--use_se', type=bool, default=False, 
                         help="Whether to use SE block in GCN_DE_Model")
-    parser.add_argument('--in_features', type=int, default=5, choices=[5, 10],
+    parser.add_argument('--in_features', type=int, default=10, choices=[5, 10],
                         help="Number of input features per node")
     return parser.parse_args()
 
@@ -251,6 +252,8 @@ def run_single_subject_fold(subject_id, args, X_full, y_full, sub_full,
     """
     Runs training and evaluation for one specific subject in a separate process.
     """
+    torch.set_num_threads(2)  # Limit CPU threads per process to prevent oversubscription
+
     # 1. Device Assignment
     num_gpus = torch.cuda.device_count()
     local_device = torch.device(f"cuda:{subject_id % num_gpus}" if num_gpus > 0 else "cpu")
@@ -261,34 +264,47 @@ def run_single_subject_fold(subject_id, args, X_full, y_full, sub_full,
     X_train, y_train = X_full[~test_mask], y_full[~test_mask]
     X_test, y_test = X_full[test_mask], y_full[test_mask]
 
+    # --- UPDATE: Input Features = 10 (Mean + Variance Features) ---
     IN_FEATURES = args.in_features  # This should be set to 10 for the new feature set, but can be overridden by args
-
-    # 3. Model Initialization (Fresh weights, zero leakage)
+    
     if args.model_type == 'GCN':
-        model = GCN_DE_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=64, 
-                             num_classes=3, num_layers=3, use_se=args.use_se, use_doubling=args.use_doubling).to(local_device)
+        print("Initializing Static GCN Model...")
+        model = GCN_DE_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=128, 
+                            num_classes=3, dropout_rate=0.5, num_layers=2, use_doubling=args.use_doubling, use_se=args.use_se).to(local_device)
     elif args.model_type == 'DGCNN':
-        model = DGCNN_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=128, 
-                            num_classes=3, num_layers=2, use_se=args.use_se, use_doubling=args.use_doubling).to(local_device)
+        print("Initializing Dynamic DGCNN Model (Learnable Graph)...")
+        model = DGCNN_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=128, num_layers=2, use_doubling=args.use_doubling,
+                            num_classes=3, dropout_rate=0.5, use_se=args.use_se).to(local_device)
     elif args.model_type == 'ADAPTIVE_DGCNN':
-        model = Adaptive_DGCNN(num_nodes=62, in_features=IN_FEATURES, num_classes=3, hidden_dim=128,
-                               num_layers=3, use_se=args.use_se, use_doubling=args.use_doubling).to(local_device)
+        static_adj = to_dense_adj(base_edge_index, max_num_nodes=62)[0].to(local_device)
+        # This is the new model with var_B's Gatekeepers and var_C's Dynamic Brain
+        model = Adaptive_DGCNN(static_adj=static_adj, num_nodes=62, in_features=IN_FEATURES, num_classes=3, use_se=args.use_se,
+                                hidden_dim=128, num_layers=2, use_doubling=args.use_doubling).to(local_device)
+        print("Using Adaptive DGCNN (var_D) - The 83% Hybrid Architecture")
     elif args.model_type == 'GraphSAGE':
+        print("Initializing GraphSAGE Model...")
         model = GraphSAGE_EEG_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=128, 
-                                    num_classes=3, num_layers=2, aggregator='max', 
-                                    use_se=args.use_se, use_doubling=args.use_doubling, dropout_rate=0.5).to(local_device)
+                                    num_classes=3, num_layers=2, aggregator='max', use_se=args.use_se, 
+                                    use_doubling=args.use_doubling, dropout_rate=0.5, num_subjects=15).to(local_device)
 
     # 4. Optimizer Setup (Split for Gamma regularization)
+    # --- Multiprocessing Safety: Access Globals with Fallback ---
+    # On Windows 'spawn', globals might not always be visible in child process scope
+    lr_val = globals().get('LEARNING_RATE', 0.0005)
+    wd_val = globals().get('WEIGHT_DECAY', 1e-3)
+    epochs_val = globals().get('EPOCHS', 60)
+    batch_size_val = globals().get('BATCH_SIZE', 128)
+
     gamma_params = [p for n, p in model.named_parameters() if 'static_norm.gamma' in n]
     other_params = [p for n, p in model.named_parameters() if 'static_norm.gamma' not in n]
     
     optimizer = optim.Adam([
-        {'params': other_params, 'weight_decay': WEIGHT_DECAY},
+        {'params': other_params, 'weight_decay': wd_val},
         {'params': gamma_params, 'weight_decay': 1e-2} 
-    ], lr=LEARNING_RATE)
+    ], lr=lr_val)
 
-    # scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=PATIENCE)
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS, eta_min=1e-6)
+    # scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS, eta_min=1e-6)
+    scheduler = optim.lr_scheduler.OneCycleLR(optimizer, max_lr=LEARNING_RATE, total_steps=EPOCHS)
     # Alpha weights prioritize Negative (Class 0) and Neutral (Class 1) slightly over Positive
     alpha_weights = torch.tensor([1.2, 1.1, 0.9]).to(local_device)
     criterion = FocalLoss(alpha=alpha_weights, gamma=2.0)
@@ -310,17 +326,19 @@ def run_single_subject_fold(subject_id, args, X_full, y_full, sub_full,
     sub_test = sub_full[test_mask]
 
     train_loader = DataLoader(TensorDataset(X_train, y_train, sub_train), 
-                                batch_size=BATCH_SIZE, 
+                                batch_size=batch_size_val, 
                                 shuffle=True,
-                                num_workers=2,      # <--- INCREASE THIS
+                                num_workers=0,      # <--- INCREASE THIS
                                 pin_memory=True,    # <--- ENABLE THIS
-                                persistent_workers=True)
+                                # persistent_workers=True
+                                )
     test_loader = DataLoader(TensorDataset(X_test, y_test, sub_test), 
-                                batch_size=BATCH_SIZE, 
+                                batch_size=batch_size_val, 
                                 shuffle=False,
-                                num_workers=2,      # <--- INCREASE THIS
+                                num_workers=0,      # <--- INCREASE THIS
                                 pin_memory=True,    # <--- ENABLE THIS
-                                persistent_workers=True)
+                                # persistent_workers=True
+                                )
 
     # 6. Training Call
     train_model_with_interrupt(
@@ -330,7 +348,7 @@ def run_single_subject_fold(subject_id, args, X_full, y_full, sub_full,
         optimizer=optimizer,
         criterion=criterion,
         scheduler=scheduler,
-        epochs=EPOCHS,
+        epochs=epochs_val,
         device=local_device,
         results_dir=results_dir,
         params_dir=params_dir,
@@ -518,8 +536,9 @@ def main():
             model = DGCNN_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=128, num_layers=2, use_doubling=args.use_doubling,
                                 num_classes=3, dropout_rate=0.5, use_se=args.use_se).to(DEVICE)
         elif args.model_type == 'ADAPTIVE_DGCNN':
+            static_adj = to_dense_adj(base_edge_index, max_num_nodes=62)[0].to(DEVICE)
             # This is the new model with var_B's Gatekeepers and var_C's Dynamic Brain
-            model = Adaptive_DGCNN(num_nodes=62, in_features=IN_FEATURES, num_classes=3, use_se=args.use_se,
+            model = Adaptive_DGCNN(static_adj=static_adj, num_nodes=62, in_features=IN_FEATURES, num_classes=3, use_se=args.use_se,
                                    hidden_dim=128, num_layers=2, use_doubling=args.use_doubling).to(DEVICE)
             print("Using Adaptive DGCNN (var_D) - The 83% Hybrid Architecture")
         elif args.model_type == 'GraphSAGE':

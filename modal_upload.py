@@ -6,9 +6,9 @@ app = modal.App("upload-eeg-code-and-resources")
 volume = modal.Volume.from_name("eeg-data-volume")
 
 
-files_list = ['Data/Preprocessed_SOTA_individual/label.mat']
+files_list = ['utils/training_utils.py']
 
-# dirs_list = ['Data/Preprocessed_SOTA_individual']
+# dirs_list = ['Data/ExtractedFeatures_1s', 'Data/ExtractedFeatures_4s', 'Models', 'utils']
 
 
 # --- ADD THIS FUNCTION TO YOUR SCRIPT ---

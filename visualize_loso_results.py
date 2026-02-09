@@ -8,8 +8,8 @@ import math
 from sklearn.metrics import accuracy_score
 
 # --- CONFIGURATION ---
-MODEL_NAME = "GRAPH_SAGE_DE_4s"
-ATTEMPT_ID = "Attempt_72_LOSO_Parallel"
+MODEL_NAME = "GraphSAGE_DE_4s"
+ATTEMPT_ID = "Attempt_125_LOSO_Parallel"
 
 RESULTS_DIR = f"Results/{MODEL_NAME}/{ATTEMPT_ID}"
 PARAMS_DIR = f"Params/{MODEL_NAME}/{ATTEMPT_ID}"

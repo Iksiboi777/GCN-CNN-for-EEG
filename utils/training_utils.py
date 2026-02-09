@@ -177,8 +177,13 @@ def evaluate(model, loader, base_edge_index, criterion, device, in_features,
                 if return_embeddings and emb is not None:
                     all_embeddings.extend(emb.cpu().numpy())
                 
-    acc = 100 * correct / total
-    avg_loss = val_loss / len(loader) if len(loader) > 0 else 0
+    # --- SAFE RETURN LOGIC (Prevents ZeroDivisionError) ---
+    if total == 0:
+        acc = 0.0
+        avg_loss = 0.0
+    else:
+        acc = 100 * correct / total
+        avg_loss = val_loss / len(loader) if len(loader) > 0 else 0
     
     if return_embeddings:
         emb_data = np.array(all_embeddings) if all_embeddings else np.array([])
