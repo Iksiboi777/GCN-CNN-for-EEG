@@ -124,6 +124,7 @@ Results/GraphSAGE_DE_1s/*
 
 
 
+
 !Results/GraphSAGE_DE_4s/
 Results/GraphSAGE_DE_4s/*
 !Results/GraphSAGE_DE_4s/Attempt_27_Phase2*/
@@ -136,6 +137,8 @@ Results/GraphSAGE_DE_4s/*
 !Results/GraphSAGE_DE_4s/Attempt_103_Phase2*/
 !Results/GraphSAGE_DE_4s/Attempt_104_Phase2*/
 !Results/GraphSAGE_DE_4s/Attempt_105_Phase2*/
+!Results/GraphSAGE_DE_4s/Attempt_125_Phase2*/
+!Results/GraphSAGE_DE_4s/Attempt_127_Phase2*/
 
 
 
@@ -165,6 +168,7 @@ Errors/GCN_DE_4s/*
 !Errors/GCN_DE_4s/Attempt_100*/
 !Errors/GCN_DE_4s/Attempt_101*/
 !Errors/GCN_DE_4s/Attempt_120*/
+
 
 
 # --- ADAPTIVE_DGCNN_DE_4s (Attempts 36-39) ---
@@ -255,6 +259,8 @@ Errors/GraphSAGE_DE_4s/*
 !Errors/GraphSAGE_DE_4s/Attempt_103_Phase2*/
 !Errors/GraphSAGE_DE_4s/Attempt_104_Phase2*/
 !Errors/GraphSAGE_DE_4s/Attempt_105_Phase2*/
+!Errors/GraphSAGE_DE_4s/Attempt_125_Phase2*/
+!Errors/GraphSAGE_DE_4s/Attempt_127_Phase2*/
 
 
 
