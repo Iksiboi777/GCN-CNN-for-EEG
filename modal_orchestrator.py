@@ -17,6 +17,38 @@ app = modal.App("eeg-de-loso-parallel")
 volume = modal.Volume.from_name("eeg-data-volume")
 
 
+@app.function(image=image, volumes={"/data": volume}, timeout=3600)
+def rebuild_cache():
+    import torch
+    import os
+    import sys
+    import numpy as np
+    sys.path.append("/data")
+    os.chdir("/data")
+    from train_de import load_de_data
+
+    # Putanje moraju biti identične onima iz debuga
+    data_folder = "Data/ExtractedFeatures_1s"
+    label_file = os.path.join(data_folder, "label.mat")
+
+    print("🔄 Pokrećem load_de_data na SVIM datotekama...")
+    # Ova funkcija će sada vidjeti svih 15 subjekata
+    X, y, sessions, subjects, _ = load_de_data(data_folder, label_file)
+
+    print(f"✅ Uspjeh! Nađeni subjekti u novom tenzoru: {np.unique(subjects)}")
+
+    data_bundle = {
+        "X": torch.tensor(X, dtype=torch.float32),
+        "y": torch.tensor(y, dtype=torch.long),
+        "subjects": torch.tensor(subjects, dtype=torch.long)
+    }
+
+    # Spremi na Volume
+    torch.save(data_bundle, "processed_seed_1s.pt")
+    print("💾 Novi processed_seed_1s.pt je spremljen.")
+
+
+
 @app.function(
     gpu="A100-40GB",
     image=image,
@@ -60,7 +92,8 @@ def train_subject_remote(subject_id, args_dict):
     from torch_geometric.utils import to_dense_adj
     from utils.training_utils import train_model_with_interrupt, evaluate
     from utils.focal_loss import FocalLoss
-    from train_de import load_de_data, compute_rolling_variance
+    from train_de import compute_rolling_variance
+
     
     # --- A. PARSE ARGS (Aligns with train_de.py) ---
     class VirtualArgs:
@@ -70,45 +103,32 @@ def train_subject_remote(subject_id, args_dict):
     args = VirtualArgs(args_dict)
 
     print(f"\n⚡ [Cloud Worker] Starting Subject {subject_id} on {torch.cuda.get_device_name(0)}")
-    print(f"   Config: {args.model_type} | Window: {args.window_size} | SE: {args.use_se} | Features: {args.in_features}")
+    print(f"   Config: {args_dict['model_type']} | Window: {args_dict['window_size']} \
+          | SE: {args_dict['use_se']} | Features: {args_dict['in_features']}")
     
-    # --- B. LOAD DATA DYNAMICALLY ---
-    # Matches get_args() -> window_size logic
-    data_folder = f"Data/ExtractedFeatures_{args.window_size}" 
-    label_file = os.path.join(data_folder, "label.mat")
-    
-    try:
-        X, y, subjects, sessions, _ = load_de_data(data_folder, label_file)
-        print(f"DEBUG: Found Subject IDs in data: {np.unique(subjects)}")
-    except FileNotFoundError:
-        # Fallback check for capitalization issues
-        if os.path.exists(os.path.join(data_folder, "Label.mat")):
-             label_file = os.path.join(data_folder, "Label.mat")
-             X, y, subjects, sessions, _ = load_de_data(data_folder, label_file)
-             print(f"DEBUG: Found Subject IDs in data: {np.unique(subjects)}")
-        else:
-            print(f"CRITICAL ERROR: Data not found at {data_folder}. Check mount paths.")
-            return {"subject": subject_id, "acc": 0.0, "status": "FailedData"}
-    
+    # 1. Fast Load from the pre-baked tensor
+    cache_path = f"processed_seed_{args_dict['window_size']}.pt"
+    data = torch.load(cache_path)
+    X, y, subjects = data["X"], data["y"], data["subjects"]
 
-    # --- C. PREPROCESSING (Feature Logic from train_de.py) ---
-    # If in_features is 10, we calculate Rolling Variance
-    if args.in_features == 10:
-        print("Calculating Rolling Variance (Feature Augmentation)...")
-        X = compute_rolling_variance(X, window_size=3) # Hardcoded as ROLLING_VAR_WINDOW=3 in train_de.py
+    # 2. Dynamic Feature Augmentation (Adjustable)
+    if args_dict["in_features"] == 10:
+        # We calculate variance locally in the container's RAM
+        # This is extremely fast because X is already a tensor in memory
+        X_np = X.numpy()
+        X_aug = compute_rolling_variance(X_np, window_size=3)
+        X = torch.tensor(X_aug, dtype=torch.float32)
 
+    # 3. LOSO Split
+    train_mask = (subjects != subject_id)
+    test_mask = (subjects == subject_id)
     
-    # --- D. LOSO SPLIT ---
-    X_tensor = torch.tensor(X, dtype=torch.float32)
-    y_tensor = torch.tensor(y, dtype=torch.long)
-    sub_tensor = torch.tensor(subjects, dtype=torch.long)
-    
-    train_mask = (sub_tensor != subject_id)
-    test_mask = (sub_tensor == subject_id)
+    # --- CRITICAL DEBUG FOR SUBJECT 4-15 ---
+    unique_ids = torch.unique(subjects).tolist()
+    print(f"DEBUG [Sub-{subject_id}]: Found Subject IDs in data: {unique_ids}")
 
-    X_train, y_train, sub_train = X_tensor[train_mask], y_tensor[train_mask], sub_tensor[train_mask]
-    X_test, y_test, sub_test = X_tensor[test_mask], y_tensor[test_mask], sub_tensor[test_mask]
-
+    X_train, y_train, sub_train = X[train_mask], y[train_mask], subjects[train_mask]
+    X_test, y_test, sub_test = X[test_mask], y[test_mask], subjects[test_mask]
 
     # --- FIX START: EMPTY SUBJECT CHECK ---
     if len(X_test) == 0:
@@ -188,7 +208,7 @@ def train_subject_remote(subject_id, args_dict):
 
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
     
-    res_dir = f"/results/{args.model_type}_Attempt_{args.run_id}/Subject_{subject_id}"
+    res_dir = f"Results/{args.model_type}_DE_{args.window_size}/Attempt_{args.run_id}_LOSO_Parallel/Subject_{subject_id}"
     os.makedirs(res_dir, exist_ok=True)
     
     def eval_wrapper(mod, load, adj, crit, dev, inf, return_preds=False, return_embeddings=False):
@@ -305,6 +325,3 @@ def main():
                 print("\nConfusion Matrix:")
                 print(confusion_matrix(all_trues, all_preds))
             except: pass
-
-
-

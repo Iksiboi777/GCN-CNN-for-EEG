@@ -26,9 +26,9 @@ import torch.multiprocessing as mp
 
 # --- Configuration ---
 LOCS_FILE = "utils/channel_62_pos.locs"
-BATCH_SIZE = 1024
+BATCH_SIZE = 128
 EPOCHS = 60
-LEARNING_RATE = 0.001
+LEARNING_RATE = 0.00025
 WEIGHT_DECAY = 1e-3 
 PATIENCE = 20
 # --- NEW: Sparsity Penalty for Adaptive Layer ---
@@ -64,12 +64,12 @@ def get_args():
     parser = argparse.ArgumentParser(description="Train GCN-DE for EEG Emotion Recognition")
     parser.add_argument('--mode', type=str, default='sub_indep', choices=['sub_dep', 'sub_indep'],
                         help="Training mode: 'sub_dep' (Session split) or 'sub_indep' (LOSO)")
-    parser.add_argument('--window_size', type=str, default='1s', choices=['1s', '4s', '2s'],
+    parser.add_argument('--window_size', type=str, default='4s', choices=['1s', '4s', '2s'],
                         help="Feature window size: '1s' or '4s'")
-    parser.add_argument('--model_type', type=str, default = 'GraphSAGE', 
+    parser.add_argument('--model_type', type=str, default = 'ADAPTIVE_DGCNN', 
                         choices=['GCN', 'DGCNN', 'ADAPTIVE_DGCNN', 'GraphSAGE'],
                         help="Type of GCN model to use")
-    parser.add_argument('--max_parallel', type=int, default=3, 
+    parser.add_argument('--max_parallel', type=int, default=5, 
                         help="Maximum number of parallel processes")
     parser.add_argument('--use_overlap_logic', type=bool, default=False,
                         help="Whether to use overlap logic in GCN_DE_Model")
