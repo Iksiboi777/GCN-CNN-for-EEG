@@ -79,18 +79,17 @@ def train_subject_remote(subject_id, args_dict):
     
     try:
         X, y, subjects, sessions, _ = load_de_data(data_folder, label_file)
+        print(f"DEBUG: Found Subject IDs in data: {np.unique(subjects)}")
     except FileNotFoundError:
         # Fallback check for capitalization issues
         if os.path.exists(os.path.join(data_folder, "Label.mat")):
              label_file = os.path.join(data_folder, "Label.mat")
              X, y, subjects, sessions, _ = load_de_data(data_folder, label_file)
+             print(f"DEBUG: Found Subject IDs in data: {np.unique(subjects)}")
         else:
             print(f"CRITICAL ERROR: Data not found at {data_folder}. Check mount paths.")
             return {"subject": subject_id, "acc": 0.0, "status": "FailedData"}
     
-    # Filter 1-15 (SEED Standard)
-    mask_15 = subjects <= 15
-    X, y, subjects, sessions = X[mask_15], y[mask_15], subjects[mask_15], sessions[mask_15]
 
     # --- C. PREPROCESSING (Feature Logic from train_de.py) ---
     # If in_features is 10, we calculate Rolling Variance
@@ -98,44 +97,7 @@ def train_subject_remote(subject_id, args_dict):
         print("Calculating Rolling Variance (Feature Augmentation)...")
         X = compute_rolling_variance(X, window_size=3) # Hardcoded as ROLLING_VAR_WINDOW=3 in train_de.py
 
-    # --- FIX: REPLACED CRASHING PANDAS LOGIC WITH NUMPY Broadcasting ---
-    print("Applying Vectorized Z-Score Normalization (Numpy 3D)...")
     
-    # 1. Create unique group IDs for (Subject, Session) pairs
-    # subjects and sessions are 1D arrays matching X's first dim
-    group_ids = subjects * 1000 + sessions
-    unique_groups, group_indices = np.unique(group_ids, return_inverse=True)
-    n_groups = len(unique_groups)
-    
-    # 2. Initialize arrays for stats: Shape (n_groups, 62, 10)
-    # X.shape is (N, 62, 10)
-    group_sums = np.zeros((n_groups, *X.shape[1:]), dtype=np.float32)
-    group_sq_sums = np.zeros((n_groups, *X.shape[1:]), dtype=np.float32)
-    
-    # 3. Accumulate sums (Vectorized "GroupBy" for 3D data)
-    np.add.at(group_sums, group_indices, X)
-    
-    # 4. Counts
-    group_counts = np.bincount(group_indices)
-    
-    # 5. Means: (n_groups, 62, 10)
-    # Reshape counts for broadcasting: (n_groups, 1, 1)
-    group_means = group_sums / group_counts[:, None, None]
-    
-    # 6. Center data
-    # group_means[group_indices] expands to (N, 62, 10) to match X
-    X_centered = X - group_means[group_indices]
-    
-    # 7. Stds
-    np.add.at(group_sq_sums, group_indices, X_centered ** 2)
-    group_stds = np.sqrt(group_sq_sums / group_counts[:, None, None])
-    group_stds[group_stds < 1e-8] = 1.0 # Avoid div by zero
-    
-    # 8. Final Normalize
-    X = X_centered / group_stds[group_indices]
-    
-    print(f"   ✅ Data Loaded & Normalized. Shape: {X.shape}", flush=True)
-
     # --- D. LOSO SPLIT ---
     X_tensor = torch.tensor(X, dtype=torch.float32)
     y_tensor = torch.tensor(y, dtype=torch.long)
@@ -343,3 +305,6 @@ def main():
                 print("\nConfusion Matrix:")
                 print(confusion_matrix(all_trues, all_preds))
             except: pass
+
+
+
