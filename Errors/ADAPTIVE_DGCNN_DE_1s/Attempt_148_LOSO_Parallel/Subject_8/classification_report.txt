@@ -1,0 +1,16 @@
+Model: Adaptive_DGCNN
+              precision    recall  f1-score   support
+
+    Negative       0.80      0.59      0.68      3360
+     Neutral       0.74      0.85      0.79      3312
+    Positive       0.89      0.98      0.93      3510
+
+    accuracy                           0.81     10182
+   macro avg       0.81      0.81      0.80     10182
+weighted avg       0.81      0.81      0.80     10182
+
+
+Confusion Matrix:
+[[1997  932  431]
+ [ 497 2805   10]
+ [   2   51 3457]]
