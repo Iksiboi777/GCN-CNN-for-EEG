@@ -7,8 +7,8 @@ Model                    : GraphSAGE_DE_1s
 Attempt                  : Attempt_142_LOSO_Parallel
 Structure                : Batch-Parallel LOSO
 run_counter              : 1
-run_counter_4s           : 127
-run_counter_1s           : 144
+run_counter_4s           : 129
+run_counter_1s           : 151
 1s                       : 5
 global_run_counter_1s    : 1
 run_counter_GCN          : 4
