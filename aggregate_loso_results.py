@@ -7,8 +7,8 @@ from sklearn.metrics import classification_report, confusion_matrix, accuracy_sc
 
 # --- CONFIGURATION ---
 # Adjust these to match the specific run you want to analyze
-MODEL_NAME = "ADAPTIVE_DGCNN_DE_4s"
-ATTEMPT_ID = "Attempt_129_LOSO_Parallel"
+MODEL_NAME = "ADAPTIVE_DGCNN_DE_1s"
+ATTEMPT_ID = "Attempt_148_LOSO_Parallel"
 
 # Directories based on your TrainingManager logic
 RESULTS_ROOT = f"Results/{MODEL_NAME}/{ATTEMPT_ID}" 
@@ -96,6 +96,50 @@ def plot_training_batches(subject_histories):
         plt.close()
         print(f"  -> Saved: {save_path}")
 
+def plot_subject_accuracies(subject_scores):
+    """
+    Plots a bar chart of accuracy per subject with mean and std dev indication.
+    Visualizes model stability across subjects.
+    """
+    if not subject_scores:
+        return
+
+    ids = sorted(subject_scores.keys())
+    accuracies = [subject_scores[i] for i in ids]
+    mean_acc = np.mean(accuracies)
+    std_dev = np.std(accuracies)
+    
+    plt.figure(figsize=(12, 6))
+    
+    # Bar Chart
+    bars = plt.bar(ids, accuracies, color='#4c72b0', edgecolor='black', alpha=0.85, width=0.6, label='Subject Acc')
+    
+    # Mean Line
+    plt.axhline(mean_acc, color='#c44e52', linestyle='--', linewidth=2, label=f'Mean: {mean_acc:.2f}%')
+    
+    # Std Dev Shading (Visualizing stability)
+    plt.axhspan(mean_acc - std_dev, mean_acc + std_dev, color='#c44e52', alpha=0.1, label=f'Std Dev: ±{std_dev:.2f}')
+
+    plt.title(f"Subject-wise Accuracy Distribution (LOSO)\n{ATTEMPT_ID}", fontsize=14, pad=15)
+    plt.xlabel("Subject ID", fontsize=12)
+    plt.ylabel("Accuracy (%)", fontsize=12)
+    plt.xticks(ids)
+    plt.ylim(0, 105) # Cap at 105 to leave room for text
+    plt.legend(loc='lower right', frameon=True)
+    plt.grid(axis='y', linestyle='--', alpha=0.4)
+    
+    # Add value labels on top of bars
+    for bar in bars:
+        height = bar.get_height()
+        plt.text(bar.get_x() + bar.get_width()/2., height + 1,
+                 f'{height:.1f}', ha='center', va='bottom', fontsize=10, fontweight='bold', color='#333333')
+    
+    save_path = os.path.join(RESULTS_ROOT, "Subject_Accuracy_BarChart.png")
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150)
+    plt.close()
+    print(f"\n[PLOTTING] Saved Subject Accuracy Chart: {save_path}")
+
 def aggregate_results():
     print(f"--- Analysis Started: {MODEL_NAME}/{ATTEMPT_ID} ---")
     
@@ -179,6 +223,9 @@ def aggregate_results():
 
     # 2. Generate Batch Plots
     plot_training_batches(subject_histories)
+
+    # 2.5 Generate Subject Accuracy Bar Chart (NEW)
+    plot_subject_accuracies(subject_scores)
 
     # 3. Calculate Global Metrics
     y_true_all = np.array(all_true_global)

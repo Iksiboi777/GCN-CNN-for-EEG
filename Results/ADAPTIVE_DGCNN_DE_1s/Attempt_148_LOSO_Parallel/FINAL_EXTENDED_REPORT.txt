@@ -7,7 +7,7 @@ Model                    : ADAPTIVE_DGCNN_DE_1s
 Attempt                  : Attempt_148_LOSO_Parallel
 Structure                : Batch-Parallel LOSO
 run_counter              : 1
-run_counter_4s           : 127
+run_counter_4s           : 129
 run_counter_1s           : 151
 1s                       : 5
 global_run_counter_1s    : 1
