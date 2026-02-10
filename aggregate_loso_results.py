@@ -255,8 +255,8 @@ import seaborn as sns
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
 
 # --- CONFIGURATION ---
-MODEL_NAME = "GCN_DE_4s"
-ATTEMPT_ID = "Attempt_120_LOSO_Parallel"
+MODEL_NAME = "GraphSAGE_DE_1s"
+ATTEMPT_ID = "Attempt_142_LOSO_Parallel"
 
 # Directories
 RESULTS_ROOT = f"Results/{MODEL_NAME}/{ATTEMPT_ID}" 
