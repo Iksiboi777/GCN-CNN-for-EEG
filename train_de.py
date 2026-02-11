@@ -27,8 +27,8 @@ import torch.multiprocessing as mp
 # --- Configuration ---
 LOCS_FILE = "utils/channel_62_pos.locs"
 BATCH_SIZE = 128
-EPOCHS = 60
-LEARNING_RATE = 0.00025
+EPOCHS = 100
+LEARNING_RATE = 0.0002
 WEIGHT_DECAY = 1e-3 
 PATIENCE = 20
 # --- NEW: Sparsity Penalty for Adaptive Layer ---
@@ -62,11 +62,11 @@ def get_next_run_id(window_size):
 
 def get_args():
     parser = argparse.ArgumentParser(description="Train GCN-DE for EEG Emotion Recognition")
-    parser.add_argument('--mode', type=str, default='sub_indep', choices=['sub_dep', 'sub_indep'],
+    parser.add_argument('--mode', type=str, default='sub_dep', choices=['sub_dep', 'sub_indep'],
                         help="Training mode: 'sub_dep' (Session split) or 'sub_indep' (LOSO)")
-    parser.add_argument('--window_size', type=str, default='4s', choices=['1s', '4s', '2s'],
+    parser.add_argument('--window_size', type=str, default='1s', choices=['1s', '4s', '2s'],
                         help="Feature window size: '1s' or '4s'")
-    parser.add_argument('--model_type', type=str, default = 'ADAPTIVE_DGCNN', 
+    parser.add_argument('--model_type', type=str, default = 'GCN', 
                         choices=['GCN', 'DGCNN', 'ADAPTIVE_DGCNN', 'GraphSAGE'],
                         help="Type of GCN model to use")
     parser.add_argument('--max_parallel', type=int, default=5, 
@@ -77,7 +77,7 @@ def get_args():
                         help="Whether to use feature doubling in GCN_DE_Model")
     parser.add_argument('--use_se', type=bool, default=True, 
                         help="Whether to use SE block in GCN_DE_Model")
-    parser.add_argument('--in_features', type=int, default=10, choices=[5, 10],
+    parser.add_argument('--in_features', type=int, default=5, choices=[5, 10],
                         help="Number of input features per node")
     return parser.parse_args()
 

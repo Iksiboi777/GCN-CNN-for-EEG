@@ -1,0 +1,17 @@
+Model: GCN_DE_Model
+Args: Namespace(mode='sub_dep', window_size='4s', model_type='GCN', max_parallel=5, use_overlap_logic=False, use_doubling=False, use_se=False, in_features=5)
+              precision    recall  f1-score   support
+
+    Negative       0.81      0.72      0.76      4170
+     Neutral       0.76      0.82      0.79      4110
+    Positive       0.92      0.95      0.93      4350
+
+    accuracy                           0.83     12630
+   macro avg       0.83      0.83      0.83     12630
+weighted avg       0.83      0.83      0.83     12630
+
+
+Confusion Matrix:
+[[3005  918  247]
+ [ 643 3351  116]
+ [  76  155 4119]]

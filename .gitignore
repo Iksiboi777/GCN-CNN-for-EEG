@@ -46,6 +46,10 @@ Results/GCN_DE_4s/*
 !Results/GCN_DE_4s/Attempt_100*/
 !Results/GCN_DE_4s/Attempt_101*/
 !Results/GCN_DE_4s/Attempt_120*/
+!Results/GCN_DE_4s/Attempt_131*/
+!Results/GCN_DE_4s/Attempt_132*/
+!Results/GCN_DE_4s/Attempt_133*/
+!Results/GCN_DE_4s/Attempt_134*/
 
 
 
@@ -109,6 +113,13 @@ Results/GCN_DE_1s/*
 !Results/GCN_DE_1s/Attempt_106*/
 !Results/GCN_DE_1s/Attempt_107*/
 !Results/GCN_DE_1s/Attempt_133*/
+!Results/GCN_DE_1s/Attempt_155_Phase2*/
+!Results/GCN_DE_1s/Attempt_156_Phase2*/
+!Results/GCN_DE_1s/Attempt_157_Phase2*/
+!Results/GCN_DE_1s/Attempt_158_Phase2*/
+
+
+
 
 
 
@@ -171,6 +182,10 @@ Errors/GCN_DE_4s/*
 !Errors/GCN_DE_4s/Attempt_100*/
 !Errors/GCN_DE_4s/Attempt_101*/
 !Errors/GCN_DE_4s/Attempt_120*/
+!Errors/GCN_DE_4s/Attempt_131*/
+!Errors/GCN_DE_4s/Attempt_132*/
+!Errors/GCN_DE_4s/Attempt_133*/
+!Errors/GCN_DE_4s/Attempt_134*/
 
 
 
@@ -234,7 +249,10 @@ Errors/GCN_DE_1s/*
 !Errors/GCN_DE_1s/Attempt_106*/
 !Errors/GCN_DE_1s/Attempt_107*/
 !Errors/GCN_DE_1s/Attempt_133*/
-
+!Errors/GCN_DE_1s/Attempt_155_Phase2*/
+!Errors/GCN_DE_1s/Attempt_156_Phase2*/
+!Errors/GCN_DE_1s/Attempt_157_Phase2*/
+!Errors/GCN_DE_1s/Attempt_158_Phase2*/
 
 
 
