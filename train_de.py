@@ -11,14 +11,11 @@ import sys
 import json
 
 from Models.var_B import GCN_DE_Model
-from Models.var_C import DGCNN_Model
 from Models.var_D import Adaptive_DGCNN
 from Models.var_ind_graph import GraphSAGE_EEG_Model
 from Models.graph_construction import get_knn_adjacency_matrix
 from torch_geometric.utils import to_dense_adj
 from utils.training_utils import train_model_with_interrupt, evaluate
-from utils.feature_engineering import SmartPreprocessor, get_standard_channel_names
-# from sklearn.preprocessing import RobustScaler # REMOVED to match Attempt 18
 from utils.focal_loss import FocalLoss
 
 import torch.multiprocessing as mp
@@ -26,17 +23,16 @@ import torch.multiprocessing as mp
 
 # --- Configuration ---
 LOCS_FILE = "utils/channel_62_pos.locs"
-BATCH_SIZE = 128
-EPOCHS = 100
-LEARNING_RATE = 0.0002
+BATCH_SIZE = 1024
+EPOCHS = 60
+LEARNING_RATE = 0.0005
 WEIGHT_DECAY = 1e-3 
 PATIENCE = 20
-# --- NEW: Sparsity Penalty for Adaptive Layer ---
-L1_LAMBDA = 1e-4  # Force gamma parameters towards zero
+L1_LAMBDA = 1e-4 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 CONFIG_FILE = "run_config.json"
 
-ROLLING_VAR_WINDOW = 3      # Window size for generating variance features
+ROLLING_VAR_WINDOW = 3   
 
 
 def get_next_run_id(window_size):
@@ -62,14 +58,14 @@ def get_next_run_id(window_size):
 
 def get_args():
     parser = argparse.ArgumentParser(description="Train GCN-DE for EEG Emotion Recognition")
-    parser.add_argument('--mode', type=str, default='sub_dep', choices=['sub_dep', 'sub_indep'],
+    parser.add_argument('--mode', type=str, default='sub_indep', choices=['sub_dep', 'sub_indep'],
                         help="Training mode: 'sub_dep' (Session split) or 'sub_indep' (LOSO)")
     parser.add_argument('--window_size', type=str, default='1s', choices=['1s', '4s', '2s'],
                         help="Feature window size: '1s' or '4s'")
     parser.add_argument('--model_type', type=str, default = 'GCN', 
                         choices=['GCN', 'DGCNN', 'ADAPTIVE_DGCNN', 'GraphSAGE'],
                         help="Type of GCN model to use")
-    parser.add_argument('--max_parallel', type=int, default=5, 
+    parser.add_argument('--max_parallel', type=int, default=3, 
                         help="Maximum number of parallel processes")
     parser.add_argument('--use_overlap_logic', type=bool, default=False,
                         help="Whether to use overlap logic in GCN_DE_Model")
@@ -77,7 +73,7 @@ def get_args():
                         help="Whether to use feature doubling in GCN_DE_Model")
     parser.add_argument('--use_se', type=bool, default=True, 
                         help="Whether to use SE block in GCN_DE_Model")
-    parser.add_argument('--in_features', type=int, default=5, choices=[5, 10],
+    parser.add_argument('--in_features', type=int, default=10, choices=[5, 10],
                         help="Number of input features per node")
     return parser.parse_args()
 
@@ -126,14 +122,6 @@ def load_de_data(data_folder, label_file):
         if subj_id not in subject_files: subject_files[subj_id] = []
         subject_files[subj_id].append(f)
 
-    # --- Initialize Smart Preprocessor ---
-    channel_names = get_standard_channel_names()
-    # preprocessor = SmartPreprocessor(channel_names) # DISABLED for Attempt 18 reproduction
-    # print("Initialized Smart Preprocessor for Bad Channel Correction.")
-    # -------------------------------------
-
-    band_weights = None
-    print("Warning: Manual band weights DISABLED. Using raw data.")
         
     for subj_id in sorted(subject_files.keys()):
         s_files = sorted(subject_files[subj_id], key=lambda x: x.split('_')[1])
@@ -147,42 +135,32 @@ def load_de_data(data_folder, label_file):
                 if key not in mat: continue
                 data = mat[key]
                 
-                # --- ROBUST SHAPE CORRECTION ---
-                # Target: (62, samples, 5)
-                # We identify dimensions by size: 62=Channels, 5=Bands
                 shape = data.shape
                 if shape[0] == 62:
                     if shape[2] == 5:
-                        pass # Already (62, samples, 5)
+                        pass 
                     elif shape[1] == 5:
-                        data = np.transpose(data, (0, 2, 1)) # (62, 5, samples) -> (62, samples, 5)
+                        data = np.transpose(data, (0, 2, 1)) 
                 elif shape[1] == 62:
                     if shape[2] == 5:
-                        data = np.transpose(data, (1, 0, 2)) # (samples, 62, 5) -> (62, samples, 5)
+                        data = np.transpose(data, (1, 0, 2)) 
                     elif shape[0] == 5:
-                        data = np.transpose(data, (1, 2, 0)) # (5, 62, samples) -> (62, samples, 5)
+                        data = np.transpose(data, (1, 2, 0)) 
                 elif shape[2] == 62:
                     if shape[1] == 5:
-                        data = np.transpose(data, (2, 0, 1)) # (samples, 5, 62) -> (62, samples, 5)
+                        data = np.transpose(data, (2, 0, 1)) 
                     elif shape[0] == 5:
-                        data = np.transpose(data, (2, 1, 0)) # (5, samples, 62) -> (62, samples, 5)
-                # -------------------------------
+                        data = np.transpose(data, (2, 1, 0)) 
 
-                args = get_args() # Get args to check in_features setting
-                # --- RESTORED: Variance Calculation ---
+
+                args = get_args() 
                 if args.in_features == 10:
-                    # Compute rolling variance (Strategy V2)
                     data_var = compute_rolling_variance(data, window_size=ROLLING_VAR_WINDOW)
-                    
-                    # Stack: (62, samples, 5) + (62, samples, 5) -> (62, samples, 10)
                     data_final = np.concatenate([data, data_var], axis=2)
-
-                    # Transpose to (samples, 62, 10) for storage/model input
                     data_final = np.transpose(data_final, (1, 0, 2))
 
-                # 5 ORIGINAL MEAN FEATURES ONLY (FOR ATTEMPT 18 REPRODUCTION)
                 if args.in_features == 5:
-                    data_final = np.transpose(data, (1, 0, 2)) # (62, samples, 5) -> (samples, 62, 5)
+                    data_final = np.transpose(data, (1, 0, 2))
 
                 num_samples = data_final.shape[0]
                 X_list.append(data_final)
@@ -203,7 +181,6 @@ def load_de_data(data_folder, label_file):
     subjects = np.concatenate(subject_list, axis=0)
     trials = np.concatenate(trial_list, axis=0)
     
-    # --- ATTEMPT 18 REPRODUCTION: MANUAL Z-SCORE NORMALIZATION ---
     print("Applying Manual Subject-Specific & Session-Specific Z-Score Normalization...")
     
     group_ids = subjects * 1000 + sessions
@@ -211,32 +188,22 @@ def load_de_data(data_folder, label_file):
     
     n_groups = len(unique_groups)
     
-    # Initialize arrays for stats
-    # X shape: (N, 62, 5) -> Stats shape: (n_groups, 62, 5)
     group_sums = np.zeros((n_groups, *X.shape[1:]), dtype=X.dtype)
     group_sq_sums = np.zeros((n_groups, *X.shape[1:]), dtype=X.dtype)
     
-    # Compute sums and counts using np.add.at (unbuffered in-place add)
     np.add.at(group_sums, group_indices, X)
-    
-    # Counts per group
+
     group_counts = np.bincount(group_indices)
-    
-    # Compute means: (n_groups, 62, 5)
-    # Reshape counts to (n_groups, 1, 1) for broadcasting
+
     group_means = group_sums / group_counts[:, None, None]
-    
-    # Broadcast means back to original sample shape
-    # shape: (N, 62, 5)
+
     expanded_means = group_means[group_indices]
     X_centered = X - expanded_means
-    
-    # Compute Stds
+
     np.add.at(group_sq_sums, group_indices, X_centered ** 2)
     group_stds = np.sqrt(group_sq_sums / group_counts[:, None, None])
-    group_stds[group_stds < 1e-6] = 1.0 # Prevent div by zero
-    
-    # Apply Normalization
+    group_stds[group_stds < 1e-6] = 1.0 
+
     expanded_stds = group_stds[group_indices]
     X = X_centered / expanded_stds
     print(f"Total Samples: {X.shape[0]}")
@@ -252,14 +219,14 @@ def run_single_subject_fold(subject_id, args, X_full, y_full, sub_full,
     """
     Runs training and evaluation for one specific subject in a separate process.
     """
-    torch.set_num_threads(2)  # Limit CPU threads per process to prevent oversubscription
+    torch.set_num_threads(2)  
 
-    # 1. Device Assignment
+
     num_gpus = torch.cuda.device_count()
     local_device = torch.device(f"cuda:{subject_id % num_gpus}" if num_gpus > 0 else "cpu")
     print(f"\n[PROCESS START] Subject {subject_id} assigned to {local_device}")
 
-    # 2. Data Splitting (Train on 14, Test on 1)
+
     test_mask = (sub_full == subject_id)
     X_train, y_train = X_full[~test_mask], y_full[~test_mask]
     X_test, y_test = X_full[test_mask], y_full[test_mask]
@@ -271,10 +238,6 @@ def run_single_subject_fold(subject_id, args, X_full, y_full, sub_full,
         print("Initializing Static GCN Model...")
         model = GCN_DE_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=128, 
                             num_classes=3, dropout_rate=0.5, num_layers=2, use_doubling=args.use_doubling, use_se=args.use_se).to(local_device)
-    elif args.model_type == 'DGCNN':
-        print("Initializing Dynamic DGCNN Model (Learnable Graph)...")
-        model = DGCNN_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=128, num_layers=2, use_doubling=args.use_doubling,
-                            num_classes=3, dropout_rate=0.5, use_se=args.use_se).to(local_device)
     elif args.model_type == 'ADAPTIVE_DGCNN':
         static_adj = to_dense_adj(base_edge_index, max_num_nodes=62)[0].to(local_device)
         # This is the new model with var_B's Gatekeepers and var_C's Dynamic Brain
@@ -287,9 +250,7 @@ def run_single_subject_fold(subject_id, args, X_full, y_full, sub_full,
                                     num_classes=3, num_layers=2, aggregator='max', use_se=args.use_se, 
                                     use_doubling=args.use_doubling, dropout_rate=0.5, num_subjects=15).to(local_device)
 
-    # 4. Optimizer Setup (Split for Gamma regularization)
-    # --- Multiprocessing Safety: Access Globals with Fallback ---
-    # On Windows 'spawn', globals might not always be visible in child process scope
+
     lr_val = globals().get('LEARNING_RATE', 0.0005)
     wd_val = globals().get('WEIGHT_DECAY', 1e-3)
     epochs_val = globals().get('EPOCHS', 60)
@@ -303,12 +264,9 @@ def run_single_subject_fold(subject_id, args, X_full, y_full, sub_full,
         {'params': gamma_params, 'weight_decay': 1e-2} 
     ], lr=lr_val)
 
-    # scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS, eta_min=1e-6)
     scheduler = optim.lr_scheduler.OneCycleLR(optimizer, max_lr=LEARNING_RATE, total_steps=EPOCHS)
-    # Alpha weights prioritize Negative (Class 0) and Neutral (Class 1) slightly over Positive
     alpha_weights = torch.tensor([1.2, 1.1, 0.9]).to(local_device)
     criterion = FocalLoss(alpha=alpha_weights, gamma=2.0)
-    # criterion = nn.CrossEntropyLoss(weight=torch.tensor([1.5, 1.2, 0.8]).to(local_device), label_smoothing=0.1)
 
     # 5. Directory Setup
     run_name = f"Attempt_{run_id}_LOSO_Parallel"
@@ -328,16 +286,14 @@ def run_single_subject_fold(subject_id, args, X_full, y_full, sub_full,
     train_loader = DataLoader(TensorDataset(X_train, y_train, sub_train), 
                                 batch_size=batch_size_val, 
                                 shuffle=True,
-                                num_workers=0,      # <--- INCREASE THIS
-                                pin_memory=True,    # <--- ENABLE THIS
-                                # persistent_workers=True
+                                num_workers=0,     
+                                pin_memory=True 
                                 )
     test_loader = DataLoader(TensorDataset(X_test, y_test, sub_test), 
                                 batch_size=batch_size_val, 
                                 shuffle=False,
-                                num_workers=0,      # <--- INCREASE THIS
-                                pin_memory=True,    # <--- ENABLE THIS
-                                # persistent_workers=True
+                                num_workers=0,     
+                                pin_memory=True
                                 )
 
     # 6. Training Call
@@ -363,14 +319,12 @@ def run_single_subject_fold(subject_id, args, X_full, y_full, sub_full,
 def main():
     args = get_args()
     
-    # 1. Data Prep
-    # data_folder = f"Data/ExtractedFeatures_{args.window_size}"
+
     data_folder = os.path.join("Data", f"ExtractedFeatures_{args.window_size}")
     label_file = os.path.join(data_folder, "label.mat")
     
     X, y, sessions, subjects, _ = load_de_data(data_folder, label_file)
     
-    # 3. Setup Runs
     run_id = get_next_run_id(args.window_size)
     model_name = f"{args.model_type}_DE_{args.window_size}"
 
@@ -378,19 +332,17 @@ def main():
         print("Running Leave-One-Subject-Out with Parallel Processing...")    
         processes = []
         subject_list = list(range(1, 16))
-        # 2. Share Tensors in Memory (Crucial for multiprocessing)
         X_tensor = torch.tensor(X, dtype=torch.float32).share_memory_()
         y_tensor = torch.tensor(y, dtype=torch.long).share_memory_()
         sub_tensor = torch.tensor(subjects, dtype=torch.long).share_memory_()
         base_edge_index = get_knn_adjacency_matrix(LOCS_FILE, k=5).share_memory_()
 
-        # Chunk the 15 subjects into groups of MAX_PARALLEL
+
         for i in range(0, 15, args.max_parallel):
             chunk = subject_list[i : i + args.max_parallel]
             print(f"\n--- Starting Chunk: Subjects {chunk} ---")
             
             for sub_id in chunk:
-                # REMOVED shared_results from args
                 p = mp.Process(target=run_single_subject_fold, 
                                args=(sub_id, args, X_tensor, y_tensor, 
                                      sub_tensor, base_edge_index, run_id, 
@@ -406,15 +358,14 @@ def main():
                 print(f"Waiting for children to save state and exit...")
                 print(f"{'!'*40}\n")
                 
-                # Wait for children to finish their handle_interrupt() routines
                 for p in processes: 
                     if p.is_alive(): p.join()
                 
                 print("\n>>> Moving to next subject chunk... (Press Ctrl+C again quickly to stop completely)")
-                processes = [] # Clear chunk list
+                processes = []
                 continue 
 
-            processes = [] # Clear chunk list
+            processes = []
         
         print("\n" + "="*40)
         print("AGGREGATING GLOBAL RESULTS FROM DISK...")
@@ -426,7 +377,6 @@ def main():
         
         root_res_dir = os.path.join("Results", model_name, f"Attempt_{run_id}_LOSO_Parallel")
         
-        # Iterate over all subjects to load their saved .npy files
         for sub_id in subject_list:
             res_file = os.path.join(root_res_dir, f"Subject_{sub_id}", f"final_test_preds_sub{sub_id}.npy")
             
@@ -444,7 +394,6 @@ def main():
                 print(f"Warning: Results missing for Subject {sub_id}")
                 subject_accuracies[sub_id] = 0.0
 
-        # --- CALCULATE GLOBAL METRICS ---
         all_preds = np.array(all_preds)
         all_trues = np.array(all_trues)
         
@@ -457,7 +406,6 @@ def main():
             
             print(f"\n[LOSO COMPLETE] Mean Acc: {global_acc:.2f}% (+/- {std_acc:.2f}%)")
             
-            # Generate Advanced Reports
             class_names = ['Negative', 'Neutral', 'Positive']
             
             try:
@@ -468,8 +416,7 @@ def main():
                 print(cls_report)
                 print("\nGlobal Confusion Matrix:")
                 print(conf_matrix)
-                
-                # Save Global Summary
+
                 with open(os.path.join(root_res_dir, "LOSO_Global_Summary.txt"), "w") as f:
                     f.write(f"Global LOSO Average: {global_acc:.2f}% (+/- {std_acc:.2f}%)\n")
                     f.write("-" * 30 + "\n")
@@ -493,7 +440,6 @@ def main():
         train_mask = (sessions == 1) | (sessions == 2)
         test_mask = (sessions == 3)
 
-        # 2. Share Tensors in Memory (Crucial for multiprocessing)
         X_tensor = torch.tensor(X, dtype=torch.float32).to(DEVICE)
         y_tensor = torch.tensor(y, dtype=torch.long).to(DEVICE)
         sub_tensor = torch.tensor(subjects, dtype=torch.long).to(DEVICE)
@@ -503,11 +449,9 @@ def main():
         X_train, y_train = X_tensor[train_mask], y_tensor[train_mask]
         X_test, y_test = X_tensor[test_mask], y_tensor[test_mask]
         
-        # ADD THIS: Extract subjects for train/test masks
         sub_train = sub_tensor[train_mask]
         sub_test = sub_tensor[test_mask]
         
-        # UPDATE THIS: Pass sub_train/sub_test to TensorDataset
         train_loader = DataLoader(TensorDataset(X_train, y_train, sub_train), 
                                   batch_size=BATCH_SIZE, 
                                   shuffle=True)
@@ -524,17 +468,13 @@ def main():
         os.makedirs(params_dir, exist_ok=True)
         os.makedirs(errors_dir, exist_ok=True)
 
-        # --- UPDATE: Input Features = 10 (Mean + Variance Features) ---
-        IN_FEATURES = args.in_features  # This should be set to 10 for the new feature set, but can be overridden by args
+
+        IN_FEATURES = args.in_features 
         
         if args.model_type == 'GCN':
             print("Initializing Static GCN Model...")
             model = GCN_DE_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=128, 
                                 num_classes=3, dropout_rate=0.5, num_layers=2, use_doubling=args.use_doubling, use_se=args.use_se).to(DEVICE)
-        elif args.model_type == 'DGCNN':
-            print("Initializing Dynamic DGCNN Model (Learnable Graph)...")
-            model = DGCNN_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=128, num_layers=2, use_doubling=args.use_doubling,
-                                num_classes=3, dropout_rate=0.5, use_se=args.use_se).to(DEVICE)
         elif args.model_type == 'ADAPTIVE_DGCNN':
             static_adj = to_dense_adj(base_edge_index, max_num_nodes=62)[0].to(DEVICE)
             # This is the new model with var_B's Gatekeepers and var_C's Dynamic Brain
@@ -547,8 +487,6 @@ def main():
                                         num_classes=3, num_layers=2, aggregator='max', use_se=args.use_se, 
                                         use_doubling=args.use_doubling, dropout_rate=0.5, num_subjects=15).to(DEVICE)
 
-        # --- UPDATED OPTIMIZER: STRONG REGULARIZATION FOR GAMMA ---
-        # We split parameters into "gamma" (needs strong regularization) and "rest".
         
         gamma_params = []
         other_params = []
@@ -560,15 +498,14 @@ def main():
                 other_params.append(param)
                 
         optimizer = optim.Adam([
-            {'params': other_params, 'weight_decay': WEIGHT_DECAY}, # Normal L2
-            {'params': gamma_params, 'weight_decay': 1e-2}          # Strong L2 (force small weights)
+            {'params': other_params, 'weight_decay': WEIGHT_DECAY}, 
+            {'params': gamma_params, 'weight_decay': 1e-2}          
         ], lr=LEARNING_RATE)
         
         # scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=PATIENCE)
         scheduler = optim.lr_scheduler.OneCycleLR(optimizer, max_lr=LEARNING_RATE, total_steps=EPOCHS)
         
-        # --- STRATEGY: Class Weights ---
-        # Double penalty for Negative (Class 0) to fix Recall
+
         class_weights = torch.tensor([1.2, 0.9, 1.0]).to(DEVICE)
         criterion = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=0.1)
 
@@ -590,11 +527,10 @@ def main():
             base_edge_index=base_edge_index,
             evaluate_fn=evaluate,
             hyperparams=args,
-            in_features=IN_FEATURES  # Passing the critical 10 features argument
+            in_features=IN_FEATURES  
         )        
 
 
 if __name__ == "__main__":
-    # REQUIRED for Windows and CUDA multiprocessing
     mp.set_start_method('spawn', force=True)
     main()

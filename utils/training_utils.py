@@ -28,7 +28,6 @@ def train_epoch(model, loader, optimizer, criterion, device, base_edge_index, in
     model.train()
     
     dense_mode = is_dense_model(model)
-    # Check signature ONCE per epoch to save time
     sig = inspect.signature(model.forward)
     has_subject_ids = 'subject_ids' in sig.parameters
     has_subject_ids_full = 'subject_ids_full' in sig.parameters
@@ -38,7 +37,6 @@ def train_epoch(model, loader, optimizer, criterion, device, base_edge_index, in
     total = 0
     
     for batch in loader:
-        # Robust Unpacking for [X, Y] or [X, Y, Sub]
         if len(batch) == 3:
             batch_X, batch_y, batch_sub = batch
             batch_sub = batch_sub.to(device)
@@ -60,7 +58,6 @@ def train_epoch(model, loader, optimizer, criterion, device, base_edge_index, in
             else:
                 outputs = model(batch_X)
         else:
-            # Sparse Formatting
             curr_batch_size, num_nodes, _ = batch_X.shape
             batch_X_flat = batch_X.view(-1, in_features)
             
@@ -69,19 +66,15 @@ def train_epoch(model, loader, optimizer, criterion, device, base_edge_index, in
             offsets = (torch.arange(curr_batch_size, device=device) * num_nodes).view(-1, 1, 1)
             edge_index = (base_edge_index.unsqueeze(0) + offsets).permute(1, 0, 2).reshape(2, -1)
             
-            # --- CRITICAL FIX: Explicitly Pass Subject IDs ---
             if batch_sub is not None:
                 if has_subject_ids:
                     outputs = model(batch_X_flat, edge_index, batch_idx, subject_ids=batch_sub)
                 elif has_subject_ids_full:
-                    # Expand if model asks for full per-node IDs
                     batch_sub_full = batch_sub.repeat_interleave(num_nodes)
                     outputs = model(batch_X_flat, edge_index, batch_idx, subject_ids_full=batch_sub_full)
                 else:
-                    # Model doesn't support subjects, just run standard
                     outputs = model(batch_X_flat, edge_index, batch_idx)
             else:
-                # No subjects available in batch
                 outputs = model(batch_X_flat, edge_index, batch_idx)
 
         loss = criterion(outputs, batch_y)
@@ -110,12 +103,10 @@ def evaluate(model, loader, base_edge_index, criterion, device, in_features,
     sig = inspect.signature(model.forward)
     has_subject_ids = 'subject_ids' in sig.parameters
     has_subject_ids_full = 'subject_ids_full' in sig.parameters
-    # Check if model supports returning embeddings (some older variants might not)
     supports_emb = 'return_embedding' in sig.parameters
 
     with torch.no_grad():
         for batch_data in loader:
-            # Robust Unpacking for [X, Y] or [X, Y, Sub]
             if len(batch_data) == 3:
                 batch_X, batch_y, batch_sub = batch_data
                 batch_sub = batch_sub.to(device)
@@ -134,8 +125,6 @@ def evaluate(model, loader, base_edge_index, criterion, device, in_features,
                 offsets = (torch.arange(curr_batch_size, device=device) * num_nodes).view(-1, 1, 1)
                 edge_index = (base_edge_index.unsqueeze(0) + offsets).permute(1, 0, 2).reshape(2, -1)
             
-            # --- FORWARD PASS (Explicit Logic) ---
-            # Determine flags to pass
             kwargs = {}
             if return_embeddings and supports_emb:
                 kwargs['return_embedding'] = True
@@ -146,7 +135,6 @@ def evaluate(model, loader, base_edge_index, criterion, device, in_features,
                 else:
                     out = model(batch_X, **kwargs)
             else:
-                # Sparse Branch
                 if batch_sub is not None:
                     if has_subject_ids:
                         out = model(batch_X_flat, edge_index, batch_idx, subject_ids=batch_sub, **kwargs)
@@ -158,7 +146,6 @@ def evaluate(model, loader, base_edge_index, criterion, device, in_features,
                 else:
                     out = model(batch_X_flat, edge_index, batch_idx, **kwargs)
 
-            # Handle Output Tuple vs Tensor
             if isinstance(out, tuple):
                 logits, emb = out
             else:
@@ -177,7 +164,6 @@ def evaluate(model, loader, base_edge_index, criterion, device, in_features,
                 if return_embeddings and emb is not None:
                     all_embeddings.extend(emb.cpu().numpy())
                 
-    # --- SAFE RETURN LOGIC (Prevents ZeroDivisionError) ---
     if total == 0:
         acc = 0.0
         avg_loss = 0.0
@@ -195,7 +181,6 @@ def evaluate(model, loader, base_edge_index, criterion, device, in_features,
     return avg_loss, acc
 
 
-# --- 2. Training Manager (State & Saving) ---
 class TrainingManager:
     def __init__(self, results_dir, params_dir, errors_dir, model, args=None):
         self.results_dir = results_dir
@@ -220,7 +205,6 @@ class TrainingManager:
         print(f"  Results -> {self.results_dir}")
         print(f"  Params  -> {self.params_dir}")
 
-        # WRITE SETUP FILE IMMEDIATELY
         if self.args:
             self.save_training_setup()
 
@@ -231,14 +215,11 @@ class TrainingManager:
             f.write("=== TRAINING SETUP & HYPERPARAMETERS ===\n")
             f.write(f"Model Class: {self.model.__class__.__name__}\n\n")
             
-            # If args is a dictionary (our new logic)
             if isinstance(self.args, dict):
                 for k, v in self.args.items():
                     f.write(f"{k}: {v}\n")
-            # If args is Namespace (argparse)
             else:
                 f.write(str(self.args))
-        # print(f"Saved: {filepath}")
 
     def update_history(self, t_loss, t_acc, v_loss, v_acc):
         self.history['train_loss'].append(t_loss)
@@ -289,25 +270,19 @@ class TrainingManager:
             debug_data = {'y_true': true_labels, 'y_pred': preds}
             np.save(os.path.join(self.errors_dir, "predictions.npy"), debug_data)
             
-            # --- FIX: Dynamic Target Names ---
             unique_labels = np.unique(true_labels)
             num_classes = len(unique_labels)
             
-            # Determine names based on class count
             if num_classes == 2:
-                # Binary Diagnostic Mode (Neg vs Neu)
                 target_names = ['Negative', 'Neutral']
             elif num_classes == 3:
-                # Standard Mode (Neg, Neu, Pos)
                 target_names = ['Negative', 'Neutral', 'Positive']
             else:
-                # Fallback for unexpected cases
                 target_names = [str(i) for i in unique_labels]
 
             try:
                 report = classification_report(true_labels, preds, target_names=target_names)
             except ValueError:
-                # Fallback if unique labels don't match expected count (e.g. test set missing a class)
                 report = classification_report(true_labels, preds)
 
             with open(os.path.join(self.errors_dir, "classification_report.txt"), "w") as f:
@@ -370,10 +345,8 @@ def train_model_with_interrupt(model, train_loader, test_loader, optimizer,
             manager.update_history(train_loss, train_acc, val_loss, val_acc)
             improved = manager.save_checkpoint(val_acc, epoch)
             
-            # 4. Logging
+            
             current_lr = optimizer.param_groups[0]['lr']
-
-            # Prepare log strings
             epoch_str = f"Epoch {epoch}/{epochs}"
             time_str = f"({time.time() - epoch_start:.1f}s)"
             lr_str = f"LR: {current_lr:.6f}"
@@ -404,7 +377,7 @@ def train_model_with_interrupt(model, train_loader, test_loader, optimizer,
     except KeyboardInterrupt:
         manager.handle_interrupt()
 
-    # --- Final Wrap-up ---
+
     print("\nRunning Final Evaluation on Best Model...")
     
     try:
@@ -421,6 +394,3 @@ def train_model_with_interrupt(model, train_loader, test_loader, optimizer,
         torch.save(manager.best_model_wts, os.path.join(manager.params_dir, "best_model_rescue.pth"))
     
     print(f"Total Time: {time.time() - start_time:.2f}s")
-
-    # End of train_model_with_interrupt
-    # return manager.best_val_acc 

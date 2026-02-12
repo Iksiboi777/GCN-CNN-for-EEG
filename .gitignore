@@ -117,6 +117,7 @@ Results/GCN_DE_1s/*
 !Results/GCN_DE_1s/Attempt_156_Phase2*/
 !Results/GCN_DE_1s/Attempt_157_Phase2*/
 !Results/GCN_DE_1s/Attempt_158_Phase2*/
+!Results/GCN_DE_1s/Attempt_162_LOSO_Parallel*/
 
 
 
@@ -253,6 +254,7 @@ Errors/GCN_DE_1s/*
 !Errors/GCN_DE_1s/Attempt_156_Phase2*/
 !Errors/GCN_DE_1s/Attempt_157_Phase2*/
 !Errors/GCN_DE_1s/Attempt_158_Phase2*/
+!Errors/GCN_DE_1s/Attempt_162_LOSO_Parallel*/
 
 
 

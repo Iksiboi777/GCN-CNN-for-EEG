@@ -5,12 +5,10 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
 
-# --- CONFIGURATION ---
-# Adjust these to match the specific run you want to analyze
-MODEL_NAME = "GraphSAGE_DE_1s"
-ATTEMPT_ID = "Attempt_142_LOSO_Parallel"
 
-# Directories based on your TrainingManager logic
+MODEL_NAME = "GCN_DE_1s"
+ATTEMPT_ID = "Attempt_162_LOSO_Parallel"
+
 RESULTS_ROOT = f"Results/{MODEL_NAME}/{ATTEMPT_ID}" 
 ERRORS_ROOT = f"Errors/{MODEL_NAME}/{ATTEMPT_ID}"
 OUTPUT_TXT = os.path.join(RESULTS_ROOT, "FINAL_EXTENDED_REPORT.txt")
@@ -49,7 +47,7 @@ def plot_training_batches(subject_histories):
         fig, axes = plt.subplots(1, 2, figsize=(18, 6))
         
         has_data = False
-        colors = plt.cm.tab10(np.linspace(0, 1, 5)) # Distinct colors for 5 subjects
+        colors = plt.cm.tab10(np.linspace(0, 1, 5))
 
         for i, sub_id in enumerate(subjects):
             if sub_id in subject_histories:
@@ -151,28 +149,20 @@ def aggregate_results():
 
     # 1. Iterate Subjects
     for sub_id in range(1, 16):
-        # Define paths based on TrainingManager logic
         res_sub_dir = os.path.join(RESULTS_ROOT, f"Subject_{sub_id}")
         err_sub_dir = os.path.join(ERRORS_ROOT, f"Subject_{sub_id}")
         
-        # A. Load History (from Results)
         hist_path = os.path.join(res_sub_dir, "training_history.npy")
         if os.path.exists(hist_path):
             subject_histories[sub_id] = np.load(hist_path, allow_pickle=True).item()
         
-        # B. Load Predictions (from Errors)
-        # TrainingManager saves this as 'predictions.npy' containing {'y_true', 'y_pred'}
-        # OR 'final_test_preds_subX.npy' if the manual test ran. We check both.
         
         pred_data = None
-        # Priority 1: Check Errors folder (standard TrainingManager artifact)
         path_err = os.path.join(err_sub_dir, "predictions.npy")
-        # Priority 2: Check Results folder (Manual final test save)
         path_res = os.path.join(res_sub_dir, f"final_test_preds_sub{sub_id}.npy")
 
         if os.path.exists(path_err):
             data = np.load(path_err, allow_pickle=True).item()
-            # Handle different naming conventions in saving
             y_pred = data.get('y_pred', data.get('preds'))
             y_true = data.get('y_true', data.get('true'))
             pred_data = (y_true, y_pred)
@@ -186,25 +176,17 @@ def aggregate_results():
         if pred_data:
             y_true, y_pred = pred_data
             
-            # Ensure Types
             y_true = np.array(y_true)
             y_pred = np.array(y_pred)
 
             all_preds_global.extend(y_pred)
             all_true_global.extend(y_true)
             
-            # Calculate Metrics
             acc = accuracy_score(y_true, y_pred) * 100
             subject_scores[sub_id] = acc
             
-            # Generate Individual Report
-            # Handle class names dynamically (e.g. if a subject only has 2 classes present)
-            unique_labels = np.unique(y_true)
-            target_names = ['Negative', 'Neutral', 'Positive'] # Default
-            if len(unique_labels) < 3:
-                # Fallback if specific classes are missing in test set
-                target_names = [str(l) for l in unique_labels] 
 
+            unique_labels = np.unique(y_true)
             cls_rep = classification_report(y_true, y_pred, labels=unique_labels, zero_division=0)
             cm = confusion_matrix(y_true, y_pred)
             
@@ -221,22 +203,17 @@ def aggregate_results():
         print("No valid prediction files found. Exiting.")
         return
 
-    # 2. Generate Batch Plots
     plot_training_batches(subject_histories)
-
-    # 2.5 Generate Subject Accuracy Bar Chart (NEW)
     plot_subject_accuracies(subject_scores)
 
-    # 3. Calculate Global Metrics
+
     y_true_all = np.array(all_true_global)
-    y_pred_all = np.array(all_preds_global)
-    
+    y_pred_all = np.array(all_preds_global)    
     global_acc = accuracy_score(y_true_all, y_pred_all) * 100
     global_report = classification_report(y_true_all, y_pred_all, target_names=['Negative', 'Neutral', 'Positive'])
     global_cm = confusion_matrix(y_true_all, y_pred_all)
     params = load_hyperparams()
 
-    # 4. Write Detailed Text Report
     print(f"\n[REPORT] Writing to: {OUTPUT_TXT}")
     with open(OUTPUT_TXT, "w") as f:
         # Header
@@ -244,13 +221,11 @@ def aggregate_results():
         f.write(f"      COMPREHENSIVE LOSO ANALYSIS: {ATTEMPT_ID}\n")
         f.write("="*60 + "\n\n")
         
-        # Section 1: Configuration
         f.write("--- 1. CONFIGURATION & HYPERPARAMETERS ---\n")
         for k, v in params.items():
             f.write(f"{k:<25}: {v}\n")
         f.write("\n")
 
-        # Section 2: Global Stats
         f.write("--- 2. GLOBAL PERFORMANCE SUMMARY ---\n")
         f.write(f"Global Mean Accuracy      : {global_acc:.2f}%\n")
         scores_list = list(subject_scores.values())
@@ -264,7 +239,6 @@ def aggregate_results():
         f.write(np.array2string(global_cm, separator=', '))
         f.write("\n\n")
 
-        # Section 3: Per-Subject Details
         f.write("--- 3. INDIVIDUAL SUBJECT MATRICES & REPORTS ---\n")
         for sub_id in sorted(subject_reports.keys()):
             data = subject_reports[sub_id]
@@ -275,7 +249,6 @@ def aggregate_results():
             f.write(data['report'])
             f.write("\n")
 
-    # 5. Global Heatmap
     plt.figure(figsize=(8, 6))
     sns.heatmap(global_cm, annot=True, fmt='d', cmap='Blues', 
                 xticklabels=['Neg', 'Neu', 'Pos'], yticklabels=['Neg', 'Neu', 'Pos'])

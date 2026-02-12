@@ -470,8 +470,6 @@ def run_fold(subject_id, args, X_full, y_full, sub_full, sess_full, base_edge_in
     
     # 5. Optimization
     optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
-    # scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS)
-    # OneCycleLR is often faster to converge than CosineAnnealing alone
     scheduler = optim.lr_scheduler.OneCycleLR(
         optimizer, max_lr=LEARNING_RATE, 
         steps_per_epoch=len(train_loader), epochs=EPOCHS,

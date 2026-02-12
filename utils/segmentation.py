@@ -9,18 +9,15 @@ def process_dataset(input_folder, suffix):
     output_folder = "Data/Raw_Data_w_Bands" 
     os.makedirs(output_folder, exist_ok=True)
 
-    # Parameters
     fs = 200
     window_sec = 2
     overlap_sec = 1
     window_size = int(window_sec * fs)
     step_size = int((window_sec - overlap_sec) * fs)
 
-    # Labels Mapping
     TRIAL_LABELS = [1, 0, -1, -1, 0, 1, -1, 0, 1, 1, 0, -1, 0, 1, -1]
     LABEL_MAP = {-1: 0, 0: 1, 1: 2}
 
-    # --- 1. Map Files to Sessions ---
     files = [f for f in os.listdir(input_folder) if f.endswith('.mat')]
     subject_files = {}
 
@@ -39,7 +36,6 @@ def process_dataset(input_folder, suffix):
         for i, fname in enumerate(file_list):
             file_to_session[fname] = i + 1 
 
-    # --- 2. First Pass: Count Total Samples ---
     print("Pass 1: Calculating total dataset size...")
     total_samples = 0
     valid_files = []
@@ -49,17 +45,14 @@ def process_dataset(input_folder, suffix):
         file_path = os.path.join(input_folder, file_name)
         
         try:
-            # Use whosmat to get shapes without loading full data
             mat_info = sio.whosmat(file_path)
-            # Filter keys
             keys = sorted([x[0] for x in mat_info if 'eeg' in x[0] and not x[0].startswith('__')])
             if len(keys) != 15: continue
             
             file_samples = 0
-            for key, shape, dtype in mat_info:
+            for key, shape, _ in mat_info:
                 if key not in keys: continue
                 
-                # Check orientation (62, n) or (n, 62)
                 if shape[0] == 62:
                     n_points = shape[1]
                 else:
@@ -78,17 +71,13 @@ def process_dataset(input_folder, suffix):
 
     print(f"Total samples: {total_samples}. Allocating memory-mapped file ({total_samples * 62 * window_size * 4 / 1e9:.2f} GB)...")
 
-    # --- 3. Allocate Memory-Mapped Array ---
     X_path = os.path.join(output_folder, f"X_raw_{suffix}.npy")
-    # Create a .npy file on disk that we can write to like an array
     X = open_memmap(X_path, mode='w+', dtype=np.float32, shape=(total_samples, 62, window_size))
     
-    # These are small enough for RAM
     y = np.zeros(total_samples, dtype=np.int64)
     sessions = np.zeros(total_samples, dtype=np.int64)
     subjects = np.zeros(total_samples, dtype=np.int64)
 
-    # --- 4. Second Pass: Process and Fill ---
     print("Pass 2: Segmentation and writing to disk...")
     current_idx = 0
     
@@ -111,26 +100,21 @@ def process_dataset(input_folder, suffix):
             n_samples = data.shape[1]
             label = LABEL_MAP[TRIAL_LABELS[i]]
             
-            # Collect segments for this trial
             trial_segments = []
             for start in range(0, n_samples - window_size + 1, step_size):
                 end = start + window_size
                 segment = data[:, start:end]
-                
-                # Z-score and handle NaNs
+            
                 segment = zscore(segment, axis=1)
                 segment = np.nan_to_num(segment)
                 trial_segments.append(segment)
             
             if not trial_segments:
                 continue
-                
-            # Convert to array and write to memmap
-            # Note: zscore returns float64, we cast to float32 to match memmap
+
             trial_segments_arr = np.array(trial_segments, dtype=np.float32)
             n_new = len(trial_segments_arr)
             
-            # Write to disk array
             X[current_idx : current_idx + n_new] = trial_segments_arr
             y[current_idx : current_idx + n_new] = label
             sessions[current_idx : current_idx + n_new] = session_id
@@ -141,19 +125,13 @@ def process_dataset(input_folder, suffix):
     print("-" * 30)
     print(f"Processing Complete.")
     print(f"Final Data Shape: {X.shape}")
-    
-    # Flush changes to disk
     del X 
     
-    # Save labels and metadata
     np.save(os.path.join(output_folder, f"y_labels_{suffix}.npy"), y)
     np.save(os.path.join(output_folder, f"sessions_{suffix}.npy"), sessions)
     np.save(os.path.join(output_folder, f"subjects_{suffix}.npy"), subjects)
     print(f"Saved .npy files to {output_folder}")
 
 if __name__ == "__main__":
-    # Run for Standard Band
-    process_dataset("Data/Cleaned_EEG_ICA_1_49", "standard")
-    
-    # Run for Gamma Band
+    process_dataset("Data/Cleaned_EEG_ICA_1_49", "standard")  
     process_dataset("Data/Cleaned_EEG_ICA_50_75", "gamma")
