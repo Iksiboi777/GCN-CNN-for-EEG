@@ -5,14 +5,16 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
 
-
-MODEL_NAME = "GCN_DE_1s"
-ATTEMPT_ID = "Attempt_162_LOSO_Parallel"
+MODEL_NAME = "GCN_DE_4s"
+ATTEMPT_ID = "Attempt_60_LOSO_Parallel"
 
 RESULTS_ROOT = f"Results/{MODEL_NAME}/{ATTEMPT_ID}" 
 ERRORS_ROOT = f"Errors/{MODEL_NAME}/{ATTEMPT_ID}"
 OUTPUT_TXT = os.path.join(RESULTS_ROOT, "FINAL_EXTENDED_REPORT.txt")
 CONFIG_FILE = "run_config.json"
+
+VISUALS_DIR = os.path.join(RESULTS_ROOT, "aggregated_visuals")
+os.makedirs(VISUALS_DIR, exist_ok=True)
 
 def load_hyperparams():
     """Tries to read global config or returns default info."""
@@ -44,7 +46,7 @@ def plot_training_batches(subject_histories):
     print("\n[PLOTTING] Generating Batch Training Curves...")
 
     for subjects, batch_name in batches:
-        fig, axes = plt.subplots(1, 2, figsize=(18, 6))
+        _, axes = plt.subplots(1, 2, figsize=(18, 6))
         
         has_data = False
         colors = plt.cm.tab10(np.linspace(0, 1, 5))
@@ -73,7 +75,6 @@ def plot_training_batches(subject_histories):
             plt.close()
             continue
             
-        # Formatting Subplot 1 (Accuracy)
         axes[0].set_title(f"{batch_name} - Accuracy Evolution")
         axes[0].set_xlabel("Epochs")
         axes[0].set_ylabel("Accuracy (%)")
@@ -81,7 +82,6 @@ def plot_training_batches(subject_histories):
         axes[0].grid(True, alpha=0.3)
         axes[0].set_ylim(0, 105)
 
-        # Formatting Subplot 2 (Loss)
         axes[1].set_title(f"{batch_name} - Loss Evolution")
         axes[1].set_xlabel("Epochs")
         axes[1].set_ylabel("Cross Entropy Loss")
@@ -109,24 +109,18 @@ def plot_subject_accuracies(subject_scores):
     
     plt.figure(figsize=(12, 6))
     
-    # Bar Chart
     bars = plt.bar(ids, accuracies, color='#4c72b0', edgecolor='black', alpha=0.85, width=0.6, label='Subject Acc')
-    
-    # Mean Line
     plt.axhline(mean_acc, color='#c44e52', linestyle='--', linewidth=2, label=f'Mean: {mean_acc:.2f}%')
-    
-    # Std Dev Shading (Visualizing stability)
     plt.axhspan(mean_acc - std_dev, mean_acc + std_dev, color='#c44e52', alpha=0.1, label=f'Std Dev: ±{std_dev:.2f}')
 
     plt.title(f"Subject-wise Accuracy Distribution (LOSO)\n{ATTEMPT_ID}", fontsize=14, pad=15)
     plt.xlabel("Subject ID", fontsize=12)
     plt.ylabel("Accuracy (%)", fontsize=12)
     plt.xticks(ids)
-    plt.ylim(0, 105) # Cap at 105 to leave room for text
+    plt.ylim(0, 105) 
     plt.legend(loc='lower right', frameon=True)
     plt.grid(axis='y', linestyle='--', alpha=0.4)
     
-    # Add value labels on top of bars
     for bar in bars:
         height = bar.get_height()
         plt.text(bar.get_x() + bar.get_width()/2., height + 1,
@@ -138,6 +132,120 @@ def plot_subject_accuracies(subject_scores):
     plt.close()
     print(f"\n[PLOTTING] Saved Subject Accuracy Chart: {save_path}")
 
+
+def load_evolution_histories():
+    """
+    Loads evolution_history.npy for all subjects if available.
+    Returns a dictionary: { sub_id: { 'preds': [epoch_arrays], 'true': np.array } }
+    """
+    subjects_data = {}
+    print("\n--- Checking for Evolution Histories ---")
+    
+    for sub_id in range(1, 16):
+        res_sub_dir = os.path.join(RESULTS_ROOT, f"Subject_{sub_id}")
+        hist_path = os.path.join(res_sub_dir, "evolution_history.npy")
+        
+        if os.path.exists(hist_path):
+            try:
+                data = np.load(hist_path, allow_pickle=True).item()
+                subjects_data[sub_id] = {
+                    'preds': data.get('preds_history', []),      
+                    'true_labels': data.get('true_labels', []) 
+                }
+            except Exception as e:
+                print(f"  Subject {sub_id}: Error loading evolution history ({e})")
+    
+    return subjects_data
+
+def generate_error_heatmap(subjects_data):
+    """
+    Generates a Heatmap: Rows = Subjects, Cols = Epochs
+    Cell Color = Accuracy. Syncs to shortest epoch count.
+    """
+    if not subjects_data:
+        return
+
+    lengths = [len(d['preds']) for d in subjects_data.values()]
+    if not lengths:
+        return
+    cutoff = min(lengths)
+    
+    print(f"\n[VISUALS] Generating Error Heatmap (Synced to {cutoff} epochs)...")
+    
+    subject_ids = sorted(subjects_data.keys())
+    matrix = np.zeros((len(subject_ids), cutoff))
+    
+    for i, sub_id in enumerate(subject_ids):
+        true_y = np.array(subjects_data[sub_id]['true_labels'])
+        
+        for epoch in range(cutoff):
+            pred_y = np.array(subjects_data[sub_id]['preds'][epoch])
+            
+            acc = accuracy_score(true_y, pred_y)
+            matrix[i, epoch] = acc * 100 
+
+    plt.figure(figsize=(15, 8))
+    sns.heatmap(matrix, annot=False, cmap='RdYlGn', vmin=33, vmax=100,
+                xticklabels=5, yticklabels=subject_ids)
+    
+    plt.title(f"Validation Accuracy per Subject over {cutoff} Epochs (LOSO)")
+    plt.xlabel("Epoch")
+    plt.ylabel("Subject ID")
+    
+    save_path = os.path.join(VISUALS_DIR, "Global_Error_Heatmap.png")
+    plt.savefig(save_path, dpi=150)
+    plt.close()
+    print(f"  -> Saved: {save_path}")
+    
+    return cutoff
+
+def generate_global_cm_evolution(cutoff, subjects_data):
+    """
+    Generates Confusion Matrices for specific epochs by concatenating
+    data from ALL subjects at that specific epoch index.
+    """
+    if not cutoff or not subjects_data:
+        return
+
+    print("[VISUALS] Generating Global CM Evolution...")
+    
+    indices = np.linspace(0, cutoff-1, 6, dtype=int)
+    indices = sorted(list(set(indices)))
+    
+    fig, axes = plt.subplots(1, len(indices), figsize=(22, 4))
+    if len(indices) == 1:
+        axes = [axes]
+
+    class_names = ['Neg', 'Neu', 'Pos'] 
+    
+    for i, epoch_idx in enumerate(indices):
+        all_true = []
+        all_pred = []
+        
+        for sub_id in sorted(subjects_data.keys()):
+            all_true.extend(subjects_data[sub_id]['true_labels'])
+            all_pred.extend(subjects_data[sub_id]['preds'][epoch_idx])
+            
+        cm = confusion_matrix(all_true, all_pred)
+        acc = accuracy_score(all_true, all_pred) * 100
+        
+        ax = axes[i]
+        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', cbar=False, ax=ax,
+                    xticklabels=class_names, yticklabels=class_names)
+        
+        ax.set_title(f"Epoch {epoch_idx+1}\nGlobal Acc: {acc:.1f}%")
+        ax.set_xlabel("Predicted")
+        if i == 0: ax.set_ylabel("True")
+
+    plt.suptitle(f"Global Model Evolution (Aggregated across {len(subjects_data)} Subjects)", fontsize=14)
+    plt.tight_layout()
+    
+    save_path = os.path.join(VISUALS_DIR, "Global_CM_Evolution.png")
+    plt.savefig(save_path, dpi=150)
+    plt.close()
+    print(f"  -> Saved: {save_path}")
+
+
 def aggregate_results():
     print(f"--- Analysis Started: {MODEL_NAME}/{ATTEMPT_ID} ---")
     
@@ -147,7 +255,6 @@ def aggregate_results():
     subject_histories = {}
     subject_reports = {} 
 
-    # 1. Iterate Subjects
     for sub_id in range(1, 16):
         res_sub_dir = os.path.join(RESULTS_ROOT, f"Subject_{sub_id}")
         err_sub_dir = os.path.join(ERRORS_ROOT, f"Subject_{sub_id}")
@@ -155,7 +262,6 @@ def aggregate_results():
         hist_path = os.path.join(res_sub_dir, "training_history.npy")
         if os.path.exists(hist_path):
             subject_histories[sub_id] = np.load(hist_path, allow_pickle=True).item()
-        
         
         pred_data = None
         path_err = os.path.join(err_sub_dir, "predictions.npy")
@@ -175,7 +281,6 @@ def aggregate_results():
 
         if pred_data:
             y_true, y_pred = pred_data
-            
             y_true = np.array(y_true)
             y_pred = np.array(y_pred)
 
@@ -185,7 +290,6 @@ def aggregate_results():
             acc = accuracy_score(y_true, y_pred) * 100
             subject_scores[sub_id] = acc
             
-
             unique_labels = np.unique(y_true)
             cls_rep = classification_report(y_true, y_pred, labels=unique_labels, zero_division=0)
             cm = confusion_matrix(y_true, y_pred)
@@ -206,6 +310,13 @@ def aggregate_results():
     plot_training_batches(subject_histories)
     plot_subject_accuracies(subject_scores)
 
+    evolution_data = load_evolution_histories()
+    if evolution_data:
+        cutoff = generate_error_heatmap(evolution_data)
+        if cutoff:
+            generate_global_cm_evolution(cutoff, evolution_data)
+    else:
+        print("[INFO] No evolution_history.npy files found. Skipping evolution heatmaps.")
 
     y_true_all = np.array(all_true_global)
     y_pred_all = np.array(all_preds_global)    
@@ -216,7 +327,6 @@ def aggregate_results():
 
     print(f"\n[REPORT] Writing to: {OUTPUT_TXT}")
     with open(OUTPUT_TXT, "w") as f:
-        # Header
         f.write("="*60 + "\n")
         f.write(f"      COMPREHENSIVE LOSO ANALYSIS: {ATTEMPT_ID}\n")
         f.write("="*60 + "\n\n")
@@ -230,8 +340,9 @@ def aggregate_results():
         f.write(f"Global Mean Accuracy      : {global_acc:.2f}%\n")
         scores_list = list(subject_scores.values())
         f.write(f"Standard Deviation        : {np.std(scores_list):.2f}%\n")
-        f.write(f"Best Subject              : ID {max(subject_scores, key=subject_scores.get)} ({max(scores_list):.2f}%)\n")
-        f.write(f"Worst Subject             : ID {min(subject_scores, key=subject_scores.get)} ({min(scores_list):.2f}%)\n\n")
+        if subject_scores:
+            f.write(f"Best Subject              : ID {max(subject_scores, key=subject_scores.get)} ({max(scores_list):.2f}%)\n")
+            f.write(f"Worst Subject             : ID {min(subject_scores, key=subject_scores.get)} ({min(scores_list):.2f}%)\n\n")
         
         f.write("Global Classification Report:\n")
         f.write(global_report)
@@ -265,182 +376,3 @@ if __name__ == "__main__":
         print(f"Error: Results root not found: {RESULTS_ROOT}")
     else:
         aggregate_results()
-
-
-# import os
-# import json
-# import numpy as np
-# import matplotlib.pyplot as plt
-# import seaborn as sns
-# from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
-
-# # --- CONFIGURATION ---
-# MODEL_NAME = "Adaptive_DGCNN_DE_4s"
-# ATTEMPT_ID = "Attempt_129_LOSO_Parallel"
-
-# # Directories
-# RESULTS_ROOT = f"Results/{MODEL_NAME}/{ATTEMPT_ID}" 
-# OUTPUT_DIR = os.path.join(RESULTS_ROOT, "aggregated_visuals")
-# os.makedirs(OUTPUT_DIR, exist_ok=True)
-
-# CONFIG_FILE = "run_config.json"
-
-# def load_all_histories():
-#     """
-#     Loads evolution_history.npy for all 15 subjects.
-#     Returns a dictionary: { sub_id: { 'preds': [epoch_arrays], 'true': np.array } }
-#     """
-#     subjects_data = {}
-    
-#     print(f"--- Loading Histories: {MODEL_NAME}/{ATTEMPT_ID} ---")
-    
-#     for sub_id in range(1, 16):
-#         res_sub_dir = os.path.join(RESULTS_ROOT, f"Subject_{sub_id}")
-#         hist_path = os.path.join(res_sub_dir, "evolution_history.npy")
-        
-#         if os.path.exists(hist_path):
-#             try:
-#                 data = np.load(hist_path, allow_pickle=True).item()
-#                 subjects_data[sub_id] = {
-#                     'preds': data['preds_history'],      # List of arrays
-#                     'true_labels': data['true_labels']   # Array
-#                 }
-#                 print(f"  Subject {sub_id}: Loaded {len(data['preds_history'])} epochs.")
-#             except Exception as e:
-#                 print(f"  Subject {sub_id}: Error loading ({e})")
-#         else:
-#             print(f"  Subject {sub_id}: [MISSING HISTORY]")
-
-#     return subjects_data
-
-# def synchronize_histories(subjects_data):
-#     """
-#     finds the lowest number of epochs any subject completed.
-#     Truncates all other subjects to this length.
-#     """
-#     if not subjects_data:
-#         return 0, {}
-
-#     # Find minimum epoch count
-#     lengths = [len(d['preds']) for d in subjects_data.values()]
-#     cutoff = min(lengths)
-    
-#     print(f"\n[SYNCHRONIZATION] Lowest epoch count found: {cutoff}")
-#     print(f"Trimming all subjects to first {cutoff} epochs locally for visualization...")
-    
-#     # Create synchronized version
-#     synced_data = {}
-#     for sub_id, data in subjects_data.items():
-#         synced_data[sub_id] = {
-#             'preds': data['preds'][:cutoff],
-#             'true_labels': data['true_labels']
-#         }
-        
-#     return cutoff, synced_data
-
-# def generate_error_heatmap(cutoff, subjects_data):
-#     """
-#     Generates a Heatmap: Rows = Subjects, Cols = Epochs
-#     Cell Color = Accuracy
-#     """
-#     print("Generating Error Heatmap...")
-    
-#     subject_ids = sorted(subjects_data.keys())
-#     matrix = np.zeros((len(subject_ids), cutoff))
-    
-#     for i, sub_id in enumerate(subject_ids):
-#         true_y = np.array(subjects_data[sub_id]['true_labels'])
-        
-#         for epoch in range(cutoff):
-#             pred_y = np.array(subjects_data[sub_id]['preds'][epoch])
-            
-#             # Calculate Accuracy
-#             acc = accuracy_score(true_y, pred_y)
-#             matrix[i, epoch] = acc * 100 # Convert to percentage
-
-#     # Plotting
-#     plt.figure(figsize=(15, 8))
-#     sns.heatmap(matrix, annot=False, cmap='RdYlGn', vmin=33, vmax=100,
-#                 xticklabels=5, yticklabels=subject_ids)
-    
-#     plt.title(f"Validation Accuracy per Subject over {cutoff} Epochs (LOSO)")
-#     plt.xlabel("Epoch")
-#     plt.ylabel("Subject ID")
-    
-#     save_path = os.path.join(OUTPUT_DIR, "Global_Error_Heatmap.png")
-#     plt.savefig(save_path, dpi=150)
-#     plt.close()
-#     print(f"  -> Saved: {save_path}")
-
-# def generate_global_cm_evolution(cutoff, subjects_data):
-#     """
-#     Generates Confusion Matrices for specific epochs by concatenating
-#     data from ALL subjects at that specific epoch index.
-#     """
-#     print("Generating Global CM Evolution...")
-    
-#     # Determine epochs to plot (Start, Mid points, End)
-#     # We want roughly 6 snapshots
-#     indices = np.linspace(0, cutoff-1, 6, dtype=int)
-#     indices = sorted(list(set(indices))) # Remove duplicates
-    
-#     fig, axes = plt.subplots(1, len(indices), figsize=(22, 4))
-    
-#     class_names = ['Neg', 'Neu', 'Pos'] # Assumption based on data
-    
-#     for i, epoch_idx in enumerate(indices):
-#         # 1. Aggregate ALL subjects for this specific epoch
-#         all_true = []
-#         all_pred = []
-        
-#         for sub_id in sorted(subjects_data.keys()):
-#             all_true.extend(subjects_data[sub_id]['true_labels'])
-#             all_pred.extend(subjects_data[sub_id]['preds'][epoch_idx])
-            
-#         # 2. Compute CM
-#         cm = confusion_matrix(all_true, all_pred)
-#         acc = accuracy_score(all_true, all_pred) * 100
-        
-#         # 3. Plot
-#         ax = axes[i] if len(indices) > 1 else axes
-#         sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', cbar=False, ax=ax,
-#                     xticklabels=class_names, yticklabels=class_names)
-        
-#         ax.set_title(f"Epoch {epoch_idx+1}\nGlobal Acc: {acc:.1f}%")
-#         ax.set_xlabel("Predicted")
-#         if i == 0: ax.set_ylabel("True")
-
-#     plt.suptitle(f"Global Model Evolution (Aggregated across {len(subjects_data)} Subjects)", fontsize=14)
-#     plt.tight_layout()
-    
-#     save_path = os.path.join(OUTPUT_DIR, "Global_CM_Evolution.png")
-#     plt.savefig(save_path, dpi=150)
-#     plt.close()
-#     print(f"  -> Saved: {save_path}")
-
-# def main():
-#     if not os.path.exists(RESULTS_ROOT):
-#         print(f"Results directory not found: {RESULTS_ROOT}")
-#         return
-
-#     # 1. Load Raw Data
-#     raw_data = load_all_histories()
-#     if not raw_data:
-#         print("No Data found.")
-#         return
-
-#     # 2. Sync (Cutoff logic)
-#     cutoff, synced_data = synchronize_histories(raw_data)
-    
-#     if cutoff == 0:
-#         print("Cutoff is 0. Cannot visualize.")
-#         return
-
-#     # 3. Visuals
-#     generate_error_heatmap(cutoff, synced_data)
-#     generate_global_cm_evolution(cutoff, synced_data)
-    
-#     print("\n[DONE] All aggregated visualizations generated.")
-
-# if __name__ == "__main__":
-#     main()

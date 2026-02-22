@@ -7,10 +7,13 @@ Model                    : GCN_DE_4s
 Attempt                  : Attempt_60_LOSO_Parallel
 Structure                : Batch-Parallel LOSO
 run_counter              : 1
-run_counter_4s           : 62
-run_counter_1s           : 74
+run_counter_4s           : 134
+run_counter_1s           : 163
 1s                       : 5
 global_run_counter_1s    : 1
+run_counter_GCN          : 4
+run_counter_2s           : 5
+run_counter_CNNGCN_Raw   : 14
 
 --- 2. GLOBAL PERFORMANCE SUMMARY ---
 Global Mean Accuracy      : 80.54%

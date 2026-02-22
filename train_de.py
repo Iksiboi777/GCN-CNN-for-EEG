@@ -21,7 +21,6 @@ from utils.focal_loss import FocalLoss
 import torch.multiprocessing as mp
 
 
-# --- Configuration ---
 LOCS_FILE = "utils/channel_62_pos.locs"
 BATCH_SIZE = 1024
 EPOCHS = 60
@@ -62,7 +61,7 @@ def get_args():
                         help="Training mode: 'sub_dep' (Session split) or 'sub_indep' (LOSO)")
     parser.add_argument('--window_size', type=str, default='1s', choices=['1s', '4s', '2s'],
                         help="Feature window size: '1s' or '4s'")
-    parser.add_argument('--model_type', type=str, default = 'GCN', 
+    parser.add_argument('--model_type', type=str, default = 'GraphSAGE', 
                         choices=['GCN', 'DGCNN', 'ADAPTIVE_DGCNN', 'GraphSAGE'],
                         help="Type of GCN model to use")
     parser.add_argument('--max_parallel', type=int, default=3, 
@@ -211,9 +210,6 @@ def load_de_data(data_folder, label_file):
 
 
 
-# -----------------------------------------------------------------------------
-# WRAPPER FUNCTION FOR A SINGLE SUBJECT FOLD (Isolated Process)
-# -----------------------------------------------------------------------------
 def run_single_subject_fold(subject_id, args, X_full, y_full, sub_full, 
                             base_edge_index, run_id, model_name):
     """
@@ -231,8 +227,8 @@ def run_single_subject_fold(subject_id, args, X_full, y_full, sub_full,
     X_train, y_train = X_full[~test_mask], y_full[~test_mask]
     X_test, y_test = X_full[test_mask], y_full[test_mask]
 
-    # --- UPDATE: Input Features = 10 (Mean + Variance Features) ---
-    IN_FEATURES = args.in_features  # This should be set to 10 for the new feature set, but can be overridden by args
+
+    IN_FEATURES = args.in_features  
     
     if args.model_type == 'GCN':
         print("Initializing Static GCN Model...")
@@ -247,7 +243,7 @@ def run_single_subject_fold(subject_id, args, X_full, y_full, sub_full,
     elif args.model_type == 'GraphSAGE':
         print("Initializing GraphSAGE Model...")
         model = GraphSAGE_EEG_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=128, 
-                                    num_classes=3, num_layers=2, aggregator='max', use_se=args.use_se, 
+                                    num_classes=3, num_layers=2, aggregator='lstm', use_se=args.use_se, 
                                     use_doubling=args.use_doubling, dropout_rate=0.5, num_subjects=15).to(local_device)
 
 
@@ -268,7 +264,7 @@ def run_single_subject_fold(subject_id, args, X_full, y_full, sub_full,
     alpha_weights = torch.tensor([1.2, 1.1, 0.9]).to(local_device)
     criterion = FocalLoss(alpha=alpha_weights, gamma=2.0)
 
-    # 5. Directory Setup
+
     run_name = f"Attempt_{run_id}_LOSO_Parallel"
     results_dir = os.path.join("Results", model_name, run_name, f"Subject_{subject_id}")
     errors_dir = os.path.join("Errors", model_name, run_name, f"Subject_{subject_id}")
@@ -279,7 +275,6 @@ def run_single_subject_fold(subject_id, args, X_full, y_full, sub_full,
     os.makedirs(errors_dir, exist_ok=True)
 
 
-    # Filter subject tensors for split
     sub_train = sub_full[~test_mask]
     sub_test = sub_full[test_mask]
 
@@ -296,7 +291,6 @@ def run_single_subject_fold(subject_id, args, X_full, y_full, sub_full,
                                 pin_memory=True
                                 )
 
-    # 6. Training Call
     train_model_with_interrupt(
         model=model,
         train_loader=train_loader,
@@ -484,7 +478,7 @@ def main():
         elif args.model_type == 'GraphSAGE':
             print("Initializing GraphSAGE Model...")
             model = GraphSAGE_EEG_Model(num_nodes=62, in_features=IN_FEATURES, hidden_dim=128, 
-                                        num_classes=3, num_layers=2, aggregator='max', use_se=args.use_se, 
+                                        num_classes=3, num_layers=2, aggregator='lstm', use_se=args.use_se, 
                                         use_doubling=args.use_doubling, dropout_rate=0.5, num_subjects=15).to(DEVICE)
 
         
@@ -502,14 +496,13 @@ def main():
             {'params': gamma_params, 'weight_decay': 1e-2}          
         ], lr=LEARNING_RATE)
         
-        # scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=PATIENCE)
+
         scheduler = optim.lr_scheduler.OneCycleLR(optimizer, max_lr=LEARNING_RATE, total_steps=EPOCHS)
         
 
         class_weights = torch.tensor([1.2, 0.9, 1.0]).to(DEVICE)
         criterion = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=0.1)
 
-        # --- CLEAN CALL TO MASTER TRAINING FUNCTION ---
         train_model_with_interrupt(
             model=model,
             train_loader=train_loader,
