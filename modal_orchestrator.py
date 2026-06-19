@@ -85,7 +85,6 @@ def train_subject_remote(subject_id, args_dict):
     
     # --- IMPORTS ---
     from Models.var_B import GCN_DE_Model
-    from Models.var_C import DGCNN_Model
     from Models.var_D import Adaptive_DGCNN
     from Models.var_ind_graph import GraphSAGE_EEG_Model
     from Models.graph_construction import get_knn_adjacency_matrix
