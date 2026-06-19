@@ -1,302 +1,66 @@
-# Ignore Python cache and local virtual environment
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
 __pycache__/
 *.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
 
-# ...existing code...
-# Local virtual environment for this project
+# ---------------------------------------------------------------------------
+# Virtual environments
+# ---------------------------------------------------------------------------
+.venv/
+venv/
+env/
 gcn_venv/
 
-*mat
-*pkl
-
-# --- GLOBAL IGNORE FOR NPY FILES ---
-# This ensures that even if a folder is whitelisted below, the .npy files inside it are ignored.
+# ---------------------------------------------------------------------------
+# Datasets & heavy binary artifacts (never commit data to git)
+#   SEED / DREAMER raw + derived features live under Data/ and stay local.
+# ---------------------------------------------------------------------------
+Data/
+*.mat
+*.pkl
 *.npy
 *.pth
+*.edf
 
-Params/*
+# ---------------------------------------------------------------------------
+# Regenerable experiment outputs (produced by the training pipeline)
+# ---------------------------------------------------------------------------
+Errors/
+Results/
+Params/
+Analysis/
+Analysis_Results/
+Trial_Plots/
+Features/
 
-.venv/
-
-# --- RESULTS FOLDER RULES ---
-# 1. Ignore everything in Results by default
-Results/*
-
-# 2. Whitelist GCN_DE_4s (parent folder)
-!Results/GCN_DE_4s/
-# 3. Ignore everything inside GCN_DE_4s by default (so we only pick specific attempts)
-Results/GCN_DE_4s/*
-# 4. Whitelist Attempts 28-34
-!Results/GCN_DE_4s/Attempt_28*/
-!Results/GCN_DE_4s/Attempt_29*/
-!Results/GCN_DE_4s/Attempt_30*/
-!Results/GCN_DE_4s/Attempt_31*/
-!Results/GCN_DE_4s/Attempt_34*/
-!Results/GCN_DE_4s/Attempt_54*/
-!Results/GCN_DE_4s/Attempt_56*/
-!Results/GCN_DE_4s/Attempt_57*/
-!Results/GCN_DE_4s/Attempt_60*/
-!Results/GCN_DE_4s/Attempt_81*/
-!Results/GCN_DE_4s/Attempt_82*/
-!Results/GCN_DE_4s/Attempt_83*/
-!Results/GCN_DE_4s/Attempt_93*/
-!Results/GCN_DE_4s/Attempt_94*/
-!Results/GCN_DE_4s/Attempt_95*/
-!Results/GCN_DE_4s/Attempt_99*/
-!Results/GCN_DE_4s/Attempt_100*/
-!Results/GCN_DE_4s/Attempt_101*/
-!Results/GCN_DE_4s/Attempt_120*/
-!Results/GCN_DE_4s/Attempt_131*/
-!Results/GCN_DE_4s/Attempt_132*/
-!Results/GCN_DE_4s/Attempt_133*/
-!Results/GCN_DE_4s/Attempt_134*/
-
-
-
-# --- ADAPTIVE_DGCNN_DE_4s (Attempts 36-39) ---
-!Results/ADAPTIVE_DGCNN_DE_4s/
-Results/ADAPTIVE_DGCNN_DE_4s/*
-!Results/ADAPTIVE_DGCNN_DE_4s/Attempt_36*/
-!Results/ADAPTIVE_DGCNN_DE_4s/Attempt_37*/
-!Results/ADAPTIVE_DGCNN_DE_4s/Attempt_38*/
-!Results/ADAPTIVE_DGCNN_DE_4s/Attempt_39*/
-!Results/ADAPTIVE_DGCNN_DE_4s/Attempt_63*/
-!Results/ADAPTIVE_DGCNN_DE_4s/Attempt_64*/
-!Results/ADAPTIVE_DGCNN_DE_4s/Attempt_110*/
-!Results/ADAPTIVE_DGCNN_DE_4s/Attempt_111*/
-!Results/ADAPTIVE_DGCNN_DE_4s/Attempt_112*/
-!Results/ADAPTIVE_DGCNN_DE_4s/Attempt_113*/
-!Results/ADAPTIVE_DGCNN_DE_4s/Attempt_129*/
-
-
-
-# --- ADAPTIVE_DGCNN_DE_1s (Attempts 50-53, 58) ---
-!Results/ADAPTIVE_DGCNN_DE_1s/
-Results/ADAPTIVE_DGCNN_DE_1s/*
-!Results/ADAPTIVE_DGCNN_DE_1s/Attempt_50*/
-!Results/ADAPTIVE_DGCNN_DE_1s/Attempt_51*/
-!Results/ADAPTIVE_DGCNN_DE_1s/Attempt_52*/
-!Results/ADAPTIVE_DGCNN_DE_1s/Attempt_53*/
-!Results/ADAPTIVE_DGCNN_DE_1s/Attempt_58*/
-!Results/ADAPTIVE_DGCNN_DE_1s/Attempt_116*/
-!Results/ADAPTIVE_DGCNN_DE_1s/Attempt_123*/
-!Results/ADAPTIVE_DGCNN_DE_1s/Attempt_124*/
-!Results/ADAPTIVE_DGCNN_DE_1s/Attempt_125*/
-!Results/ADAPTIVE_DGCNN_DE_1s/Attempt_127*/
-!Results/ADAPTIVE_DGCNN_DE_1s/Attempt_148*/
-
-
-
-
-# --- GCN_DE_1s (Attempts 54-57) ---
-!Results/GCN_DE_1s/
-Results/GCN_DE_1s/*
-!Results/GCN_DE_1s/Attempt_54*/
-!Results/GCN_DE_1s/Attempt_55*/
-!Results/GCN_DE_1s/Attempt_56*/
-!Results/GCN_DE_1s/Attempt_57*/
-!Results/GCN_DE_1s/Attempt_74*/
-!Results/GCN_DE_1s/Attempt_91*/
-!Results/GCN_DE_1s/Attempt_92*/
-!Results/GCN_DE_1s/Attempt_93*/
-!Results/GCN_DE_1s/Attempt_94*/
-# --- Attempts (97-103) ---
-!Results/GCN_DE_1s/Attempt_97*/
-!Results/GCN_DE_1s/Attempt_98*/
-!Results/GCN_DE_1s/Attempt_99*/
-!Results/GCN_DE_1s/Attempt_100*/
-!Results/GCN_DE_1s/Attempt_101*/
-!Results/GCN_DE_1s/Attempt_102*/
-!Results/GCN_DE_1s/Attempt_103*/
-
-!Results/GCN_DE_1s/Attempt_105*/
-!Results/GCN_DE_1s/Attempt_106*/
-!Results/GCN_DE_1s/Attempt_107*/
-!Results/GCN_DE_1s/Attempt_133*/
-!Results/GCN_DE_1s/Attempt_155_Phase2*/
-!Results/GCN_DE_1s/Attempt_156_Phase2*/
-!Results/GCN_DE_1s/Attempt_157_Phase2*/
-!Results/GCN_DE_1s/Attempt_158_Phase2*/
-!Results/GCN_DE_1s/Attempt_162_LOSO_Parallel*/
-
-
-
-
-
-
-# --- GCN_DE_1s (Attempts 48, 59) ---
-!Results/GraphSAGE_DE_1s/
-Results/GraphSAGE_DE_1s/*
-!Results/GraphSAGE_DE_1s/Attempt_48_Phase2*/
-!Results/GraphSAGE_DE_1s/Attempt_59_Phase2*/
-!Results/GraphSAGE_DE_1s/Attempt_87_Phase2*/
-!Results/GraphSAGE_DE_1s/Attempt_92_Phase2*/
-!Results/GraphSAGE_DE_1s/Attempt_108_Phase2*/
-!Results/GraphSAGE_DE_1s/Attempt_109_Phase2*/
-!Results/GraphSAGE_DE_1s/Attempt_110_Phase2*/
-!Results/GraphSAGE_DE_1s/Attempt_113_Phase2*/
-!Results/GraphSAGE_DE_1s/Attempt_142*/
-
-
-
-
-!Results/GraphSAGE_DE_4s/
-Results/GraphSAGE_DE_4s/*
-!Results/GraphSAGE_DE_4s/Attempt_27_Phase2*/
-!Results/GraphSAGE_DE_4s/Attempt_84_Phase2*/
-!Results/GraphSAGE_DE_4s/Attempt_85_Phase2*/
-!Results/GraphSAGE_DE_4s/Attempt_86_Phase2*/
-!Results/GraphSAGE_DE_4s/Attempt_87_Phase2*/
-!Results/GraphSAGE_DE_4s/Attempt_90_Phase2*/
-!Results/GraphSAGE_DE_4s/Attempt_92_Phase2*/
-!Results/GraphSAGE_DE_4s/Attempt_103_Phase2*/
-!Results/GraphSAGE_DE_4s/Attempt_104_Phase2*/
-!Results/GraphSAGE_DE_4s/Attempt_105_Phase2*/
-!Results/GraphSAGE_DE_4s/Attempt_125*/
-!Results/GraphSAGE_DE_4s/Attempt_127*/
-
-
-
-
-# --- ERRORS FOLDER RULES ---
-# 1. Ignore everything in Errors by default
-Errors/*
-
-# 2. Whitelist GCN_DE_4s
-!Errors/GCN_DE_4s/
-Errors/GCN_DE_4s/*
-!Errors/GCN_DE_4s/Attempt_28*/
-!Errors/GCN_DE_4s/Attempt_29*/
-!Errors/GCN_DE_4s/Attempt_30*/
-!Errors/GCN_DE_4s/Attempt_31*/
-!Errors/GCN_DE_4s/Attempt_34*/
-!Errors/GCN_DE_4s/Attempt_54*/
-!Errors/GCN_DE_4s/Attempt_56*/
-!Errors/GCN_DE_4s/Attempt_57*/
-!Errors/GCN_DE_4s/Attempt_81*/
-!Errors/GCN_DE_4s/Attempt_82*/
-!Errors/GCN_DE_4s/Attempt_83*/
-!Errors/GCN_DE_4s/Attempt_93*/
-!Errors/GCN_DE_4s/Attempt_94*/
-!Errors/GCN_DE_4s/Attempt_95*/
-!Errors/GCN_DE_4s/Attempt_99*/
-!Errors/GCN_DE_4s/Attempt_100*/
-!Errors/GCN_DE_4s/Attempt_101*/
-!Errors/GCN_DE_4s/Attempt_120*/
-!Errors/GCN_DE_4s/Attempt_131*/
-!Errors/GCN_DE_4s/Attempt_132*/
-!Errors/GCN_DE_4s/Attempt_133*/
-!Errors/GCN_DE_4s/Attempt_134*/
-
-
-
-# --- ADAPTIVE_DGCNN_DE_4s (Attempts 36-39) ---
-!Errors/ADAPTIVE_DGCNN_DE_4s/
-Errors/ADAPTIVE_DGCNN_DE_4s/*
-!Errors/ADAPTIVE_DGCNN_DE_4s/Attempt_36*/
-!Errors/ADAPTIVE_DGCNN_DE_4s/Attempt_37*/
-!Errors/ADAPTIVE_DGCNN_DE_4s/Attempt_38*/
-!Errors/ADAPTIVE_DGCNN_DE_4s/Attempt_39*/
-!Errors/ADAPTIVE_DGCNN_DE_4s/Attempt_63*/
-!Errors/ADAPTIVE_DGCNN_DE_4s/Attempt_64*/
-!Errors/ADAPTIVE_DGCNN_DE_4s/Attempt_110*/
-!Errors/ADAPTIVE_DGCNN_DE_4s/Attempt_111*/
-!Errors/ADAPTIVE_DGCNN_DE_4s/Attempt_112*/
-!Errors/ADAPTIVE_DGCNN_DE_4s/Attempt_113*/
-!Errors/ADAPTIVE_DGCNN_DE_4s/Attempt_129*/
-
-
-
-# --- ADAPTIVE_DGCNN_DE_1s (Attempts 50-53) ---
-!Errors/ADAPTIVE_DGCNN_DE_1s/
-Errors/ADAPTIVE_DGCNN_DE_1s/*
-!Errors/ADAPTIVE_DGCNN_DE_1s/Attempt_50*/
-!Errors/ADAPTIVE_DGCNN_DE_1s/Attempt_51*/
-!Errors/ADAPTIVE_DGCNN_DE_1s/Attempt_52*/
-!Errors/ADAPTIVE_DGCNN_DE_1s/Attempt_53*/
-!Errors/ADAPTIVE_DGCNN_DE_1s/Attempt_58*/
-!Errors/ADAPTIVE_DGCNN_DE_1s/Attempt_116*/
-!Errors/ADAPTIVE_DGCNN_DE_1s/Attempt_123*/
-!Errors/ADAPTIVE_DGCNN_DE_1s/Attempt_124*/
-!Errors/ADAPTIVE_DGCNN_DE_1s/Attempt_125*/
-!Errors/ADAPTIVE_DGCNN_DE_1s/Attempt_127*/
-!Errors/ADAPTIVE_DGCNN_DE_1s/Attempt_148*/
-
-
-
-
-# --- GCN_DE_1s (Attempts 54-57) ---
-!Errors/GCN_DE_1s/
-Errors/GCN_DE_1s/*
-!Errors/GCN_DE_1s/Attempt_54*/
-!Errors/GCN_DE_1s/Attempt_55*/
-!Errors/GCN_DE_1s/Attempt_56*/
-!Errors/GCN_DE_1s/Attempt_57*/
-!Errors/GCN_DE_1s/Attempt_74*/
-!Errors/GCN_DE_1s/Attempt_91*/
-!Errors/GCN_DE_1s/Attempt_92*/
-!Errors/GCN_DE_1s/Attempt_93*/
-!Errors/GCN_DE_1s/Attempt_94*/
-# --- Attempts (97-103) ---
-!Errors/GCN_DE_1s/Attempt_97*/
-!Errors/GCN_DE_1s/Attempt_98*/
-!Errors/GCN_DE_1s/Attempt_99*/
-!Errors/GCN_DE_1s/Attempt_100*/
-!Errors/GCN_DE_1s/Attempt_101*/
-!Errors/GCN_DE_1s/Attempt_102*/
-!Errors/GCN_DE_1s/Attempt_103*/
-# --- Attempts (105-107) ---
-!Errors/GCN_DE_1s/Attempt_105*/
-!Errors/GCN_DE_1s/Attempt_106*/
-!Errors/GCN_DE_1s/Attempt_107*/
-!Errors/GCN_DE_1s/Attempt_133*/
-!Errors/GCN_DE_1s/Attempt_155_Phase2*/
-!Errors/GCN_DE_1s/Attempt_156_Phase2*/
-!Errors/GCN_DE_1s/Attempt_157_Phase2*/
-!Errors/GCN_DE_1s/Attempt_158_Phase2*/
-!Errors/GCN_DE_1s/Attempt_162_LOSO_Parallel*/
-
-
-
-# --- GraphSAGE_DE_1s (Attempts 54-57) ---
-!Errors/GraphSAGE_DE_1s/
-Errors/GraphSAGE_DE_1s/*
-!Errors/GraphSAGE_DE_1s/Attempt_48_Phase2*/
-!Errors/GraphSAGE_DE_1s/Attempt_59_Phase2*/
-!Errors/GraphSAGE_DE_1s/Attempt_87_Phase2*/
-!Errors/GraphSAGE_DE_1s/Attempt_92_Phase2*/
-!Errors/GraphSAGE_DE_1s/Attempt_108_Phase2*/
-!Errors/GraphSAGE_DE_1s/Attempt_109_Phase2*/
-!Errors/GraphSAGE_DE_1s/Attempt_110_Phase2*/
-!Errors/GraphSAGE_DE_1s/Attempt_113_Phase2*/
-!Results/GraphSAGE_DE_1s/Attempt_142*/
-
-
-
-# --- GraphSAGE_DE_4s (Attempt 27) ---
-!Errors/GraphSAGE_DE_4s/
-Errors/GraphSAGE_DE_4s/*
-!Errors/GraphSAGE_DE_4s/Attempt_84_Phase2*/
-!Errors/GraphSAGE_DE_4s/Attempt_85_Phase2*/
-!Errors/GraphSAGE_DE_4s/Attempt_86_Phase2*/
-!Errors/GraphSAGE_DE_4s/Attempt_87_Phase2*/
-!Errors/GraphSAGE_DE_4s/Attempt_90_Phase2*/
-!Errors/GraphSAGE_DE_4s/Attempt_92_Phase2*/
-!Errors/GraphSAGE_DE_4s/Attempt_103_Phase2*/
-!Errors/GraphSAGE_DE_4s/Attempt_104_Phase2*/
-!Errors/GraphSAGE_DE_4s/Attempt_105_Phase2*/
-!Errors/GraphSAGE_DE_4s/Attempt_125*/
-!Errors/GraphSAGE_DE_4s/Attempt_127*/
-
-
-
-
-Data/
+# ---------------------------------------------------------------------------
+# Reference material / scratch (kept locally, not part of the codebase)
+# ---------------------------------------------------------------------------
+Models_for_EEG_on_the_Datasets/
 Dataset_Papers/
 GNN_papers/
-
 What_to_do/
+OTHER RUNS FOR LATER/
+NOTES AND COURSE OF ACTION/
 
+# Heavy exploratory notebooks (kept locally)
+GCN_demo.ipynb
+preprocessing_EDF.ipynb
 
-# Jupyter checkpoints
-.ipynb_checkpoints/
+# ---------------------------------------------------------------------------
+# OS / editor
+# ---------------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+.idea/
+*.swp
