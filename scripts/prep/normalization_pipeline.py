@@ -2,7 +2,7 @@ import os
 import numpy as np
 import torch
 import scipy.io
-from utils.feature_engineering import SmartPreprocessor, get_standard_channel_names
+from eeg_gnn.data.feature_engineering import SmartPreprocessor, get_standard_channel_names
 
 # --- CONFIG ---
 DATA_FOLDER = "Data/ExtractedFeatures_1s"

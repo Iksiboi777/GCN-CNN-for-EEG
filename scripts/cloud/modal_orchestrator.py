@@ -25,7 +25,7 @@ def rebuild_cache():
     import numpy as np
     sys.path.append("/data")
     os.chdir("/data")
-    from train_de import load_de_data
+    from eeg_gnn.data.features import load_de_data
 
     # Putanje moraju biti identične onima iz debuga
     data_folder = "Data/ExtractedFeatures_1s"
@@ -84,14 +84,14 @@ def train_subject_remote(subject_id, args_dict):
     threading.Thread(target=log_gpu_stats, daemon=True).start()
     
     # --- IMPORTS ---
-    from Models.var_B import GCN_DE_Model
-    from Models.var_D import Adaptive_DGCNN
-    from Models.var_ind_graph import GraphSAGE_EEG_Model
-    from Models.graph_construction import get_knn_adjacency_matrix
+    from eeg_gnn.models.gcn_de import GCN_DE_Model
+    from eeg_gnn.models.adaptive_dgcnn import Adaptive_DGCNN
+    from eeg_gnn.models.graphsage import GraphSAGE_EEG_Model
+    from eeg_gnn.graph.construction import get_knn_adjacency_matrix
     from torch_geometric.utils import to_dense_adj
-    from utils.training_utils import train_model_with_interrupt, evaluate
-    from utils.focal_loss import FocalLoss
-    from train_de import compute_rolling_variance
+    from eeg_gnn.training.engine import train_model_with_interrupt, evaluate
+    from eeg_gnn.training.losses import FocalLoss
+    from eeg_gnn.data.features import compute_rolling_variance
 
     
     # --- A. PARSE ARGS (Aligns with train_de.py) ---
@@ -256,7 +256,7 @@ def main():
     # Check if we can import logic from local train_de.py
     try:
         # Import dynamically from local file to get the exact ID logic
-        from train_de import get_next_run_id
+        from eeg_gnn.data.features import get_next_run_id
     except ImportError:
         def get_next_run_id(ws): return 999 # Fallback if local import fails
         print("Warning: Could not import get_next_run_id from train_de.py, using 999")

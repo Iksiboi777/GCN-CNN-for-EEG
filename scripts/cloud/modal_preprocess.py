@@ -21,7 +21,7 @@ def prepare_data():
     sys.path.append("/data") # Ensure we can import from the mounted volume
     os.chdir("/data") # Change working directory to the mounted volume
 
-    from train_de import load_de_data
+    from eeg_gnn.data.features import load_de_data
     import torch
 
     # Run your heavy SS & SS normalization ONCE
