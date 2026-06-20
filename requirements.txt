@@ -1,13 +1,15 @@
+# Runtime dependencies. The canonical source is pyproject.toml — prefer:
+#     pip install -e .
+#
+# torch and torch-geometric often need platform/CUDA-specific wheels; see
+# https://pytorch.org and https://pytorch-geometric.readthedocs.io for the
+# correct install command for your system.
 numpy
 scipy
 scikit-learn
 mne
 torch
-torchvision
-torchaudio
 torch-geometric
 matplotlib
-seaborn
 pandas
-jupyter
-
+seaborn
