@@ -24,8 +24,10 @@ gcn_venv/
 # ---------------------------------------------------------------------------
 # Datasets & heavy binary artifacts (never commit data to git)
 #   SEED / DREAMER raw + derived features live under Data/ and stay local.
+#   Root-anchored so it does NOT also ignore the src/eeg_gnn/data package
+#   (git is case-insensitive on Windows: bare "Data/" would match "data/").
 # ---------------------------------------------------------------------------
-Data/
+/Data/
 *.mat
 *.pkl
 *.npy
@@ -64,3 +66,14 @@ preprocessing_EDF.ipynb
 Thumbs.db
 .idea/
 *.swp
+
+# ---------------------------------------------------------------------------
+# Scratch / personal materials at repo root (kept locally, not committed).
+# Useful diagrams live in images/ and docs/figures/ (subdirs, not ignored).
+# ---------------------------------------------------------------------------
+/*.pdf
+/*.docx
+/*.pptx
+/*.png
+/*.jpg
+/program.md

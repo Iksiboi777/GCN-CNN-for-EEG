@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "eeg-gnn"
+version = "1.0.0"
+description = "Graph Neural Networks for EEG emotion recognition on the SEED dataset"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Ivan Kušeta" }]
+keywords = ["EEG", "emotion recognition", "graph neural networks", "SEED", "affective computing"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "numpy",
+    "scipy",
+    "scikit-learn",
+    "mne",
+    "torch",
+    "torch-geometric",
+    "matplotlib",
+    "pandas",
+    "seaborn",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "ruff", "mypy"]
+
+[project.scripts]
+eeg-gnn-train = "eeg_gnn.train:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+eeg_gnn = ["graph/*.locs"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "scripts", "tests"]
