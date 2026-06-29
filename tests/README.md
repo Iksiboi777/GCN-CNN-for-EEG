@@ -12,3 +12,4 @@ checkout and exercises the models on a full install.
 | `test_normalization.py` | Per-`(subject, session)` group-wise z-scoring preserves shape and normalises correctly. | no |
 | `test_graph.py` | k-NN channel-graph construction from the 10–20 montage. | yes |
 | `test_models.py` | The model registry and each architecture's forward pass. | yes |
+| `test_smoke_e2e.py` | End-to-end: the real `run_session_holdout` / `run_single_subject_fold` entry points on synthetic data (both protocols, all 3 models), with stdout forced through a strict `cp1250` console to guard against non-ASCII print regressions. | yes |
