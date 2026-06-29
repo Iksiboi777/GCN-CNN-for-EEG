@@ -356,7 +356,7 @@ def train_model_with_interrupt(model, train_loader, test_loader, optimizer,
             
             if improved:
                 # Add a visual indicator for new best models
-                log_line += f"  ★ BEST (Ep {epoch})"
+                log_line += f"  *** BEST (Ep {epoch})"
                 # patience_counter = 0 
             else:
                 pass
