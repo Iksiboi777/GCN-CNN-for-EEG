@@ -4,10 +4,6 @@ Visual map of the `eeg_gnn` pipeline (post-refactor `src/` package). Renders nat
 on GitHub. For *why* the architecture looks like this, see [`RESEARCH_HISTORY.md`](../RESEARCH_HISTORY.md);
 for *how to run it*, see the [README](../README.md).
 
-> The older `docs/architecture_map.txt` describes the **pre-refactor** layout
-> (`Models/var_B.py`, `train_de.py`, "no package structure") and is now stale — this
-> file supersedes it.
-
 ---
 
 ## 1 · Data & training pipeline
