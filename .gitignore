@@ -35,15 +35,18 @@ gcn_venv/
 *.edf
 
 # ---------------------------------------------------------------------------
-# Regenerable experiment outputs (produced by the training pipeline)
+# Regenerable experiment outputs (produced by the training pipeline).
+#   Root-anchored (leading /) so these do NOT also ignore tracked source dirs
+#   such as scripts/analysis/ or docs/results/ (git is case-insensitive on Windows,
+#   so a bare "Analysis/" would otherwise match "scripts/analysis/").
 # ---------------------------------------------------------------------------
-Errors/
-Results/
-Params/
-Analysis/
-Analysis_Results/
-Trial_Plots/
-Features/
+/Errors/
+/Results/
+/Params/
+/Analysis/
+/Analysis_Results/
+/Trial_Plots/
+/Features/
 
 # ---------------------------------------------------------------------------
 # Reference material / scratch (kept locally, not part of the codebase)
