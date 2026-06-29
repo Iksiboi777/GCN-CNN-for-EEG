@@ -2,11 +2,13 @@
 
 **A controlled comparison of three graph-neural-network paradigms for cross-subject affect decoding on the SEED dataset.**
 
-> Master's thesis, University of Zagreb (FER) — *Klasifikacija emocija iz EEG signala korištenjem neuronskih mreža temeljenih na grafovima* — Ivan Kušeta, mentor doc. dr. sc. Nikolina Frid.
+> Master's thesis, University of Zagreb (FER) — *Klasifikacija emocija iz EEG signala korištenjem neuronskih mreža temeljenih na grafovima* — Ivan Kušeta, mentor doc. dr. sc. Nikolina Frid. The thesis is in Croatian; its full text is archived on the University's public thesis repositories — [Repozitorij FER-a](https://repozitorij.fer.unizg.hr/) and the [National Repository of Theses (ZIR)](https://zir.nsk.hr/) — searchable by author. (The PDF is intentionally not committed to this code repository.)
 
 This repository treats the EEG electrode montage as a **graph** (electrodes = nodes, functional/spatial relationships = edges) and asks a focused scientific question: **how does the strength of a model's structural prior trade off against its ability to generalize across people?** It implements and rigorously compares three architectures along that spectrum, under two evaluation protocols, with a controlled ablation of the feature set and attention modules.
 
 > **For a reviewer with no EEG background and no Croatian:** the thesis is written in Croatian, so this README, the source code, and the git history are the complete scientific record. [§3 (Background primer)](#3-background-a-60-second-primer-for-non-eeg-readers) gives the EEG vocabulary you need; [§6 (Author's contribution)](#6-authors-exact-contribution) states exactly which parts are standard/borrowed versus original to this work; [§7 (Reproduce it)](#7-reproduce-it) is a complete recipe from data access to outputs.
+
+> **Three documents, one project** (so the two long Markdown files don't confuse you): this **README** is the reference manual — what the project is, how to run it, what the results mean. **[RESEARCH_HISTORY.md](RESEARCH_HISTORY.md)** is the eight-week research narrative — every framework that was tried and discarded, and *why*; i.e. how the final architecture was actually found. **[docs/architecture_map.md](docs/architecture_map.md)** is the visual pipeline-and-model map.
 
 ---
 
@@ -218,7 +220,7 @@ scripts/
 ├── analysis/           Result aggregation & visualization
 └── prep/               Exploratory raw→DE feature scripts (largely archival — see §7.1)
 tests/                  Pytest suite (numpy unit tests + torch-gated model tests)
-docs/                   Thesis PDF, analysis reports, architecture map, figures
+docs/                   Analysis reports, architecture map (architecture_map.md), figures
 ```
 
 ## 9. Results & interpretation
@@ -231,7 +233,7 @@ The findings resolve onto **three orthogonal axes**, not a ranking:
 
 **Block ablation.** Subject Bias is the highest-leverage stabiliser for cross-session/cross-subject shift; SE is a double-edged regulator (helps DGCNN at 10 features, *hurts* GCN at 4 s / 5 features); AGLI provides per-sensor calibration; attentional read-out adds artifact robustness. Subject 12 is the hardest fold across every model (atypical neural patterns; see [`docs/reports/HARD_SUBJECTS_ANALYSIS.md`](docs/reports/HARD_SUBJECTS_ANALYSIS.md)).
 
-Full per-configuration tables and learning-curve analyses are in [`docs/reports/`](docs/reports/) and the [thesis](docs/Master%20Thesis.pdf).
+Full per-configuration tables and learning-curve analyses are in [`docs/reports/`](docs/reports/), distilled in the [research history](RESEARCH_HISTORY.md), and detailed in the thesis itself (archived on the [public FER repository](https://repozitorij.fer.unizg.hr/)).
 
 ## 10. Limitations
 
@@ -271,7 +273,7 @@ Graph machinery ports too: patient-similarity graphs use the same node-graph + a
   title  = {Klasifikacija emocija iz EEG signala korištenjem neuronskih mreža temeljenih na grafovima},
   school = {University of Zagreb, Faculty of Electrical Engineering and Computing},
   year   = {2026},
-  note   = {Diploma thesis no. 1188}
+  note   = {Diploma thesis no. 1188. Full text: https://repozitorij.fer.unizg.hr/}
 }
 ```
 

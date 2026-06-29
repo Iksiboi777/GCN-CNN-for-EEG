@@ -78,3 +78,9 @@ Thumbs.db
 /*.jpg
 /program.md
 README.ipynb
+RESEARCH_HISTORY.ipynb
+
+# ---------------------------------------------------------------------------
+# University / personal documents — keep local, never publish to the repo
+# ---------------------------------------------------------------------------
+docs/Master Thesis.pdf
