@@ -220,8 +220,14 @@ scripts/
 ├── analysis/           Result aggregation & visualization
 └── prep/               Exploratory raw→DE feature scripts (largely archival — see §7.1)
 tests/                  Pytest suite (numpy unit tests + torch-gated model tests)
-docs/                   Analysis reports, architecture map (architecture_map.md), figures
+docs/
+├── reports/            Dated lab-notebook reports (synthesized in RESEARCH_HISTORY.md)
+├── dataset/            SEED reference: channel order, stimulation order, subject/gender info
+├── results/            Curated per-subject performance summaries (CSV)
+└── architecture_map.md Visual Mermaid pipeline + model map
 ```
+
+Each multi-script folder (`data/`, `models/`, `scripts/analysis/`, `scripts/prep/`, `tests/`) carries its own `README.md` summarizing the scripts inside and how they fit the workflow.
 
 ## 9. Results & interpretation
 
