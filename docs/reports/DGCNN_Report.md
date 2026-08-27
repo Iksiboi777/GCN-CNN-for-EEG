@@ -1,5 +1,16 @@
 # DGCNN Experiment Report: Dynamic Graph Learning
 
+> [!NOTE]
+> **Historical lab-notebook report — superseded.** This file records the state of the
+> work on the date shown, and is kept for the research record. Its numbers reflect the
+> configuration and evaluation protocol *at the time of writing*; the current results are
+> the table in the [README](../../README.md#4-headline-results), and the narrative that
+> connects these reports is [`RESEARCH_HISTORY.md`](../../RESEARCH_HISTORY.md).
+>
+> These runs **predate the validation-split fix**: their best epoch was selected on the
+> test split, so the accuracies below are optimistically biased. See the README's
+> *Evaluation integrity* note before quoting any figure from this page.
+
 **Date:** December 14, 2025  
 **Model:** Dynamical Graph Convolutional Neural Network (DGCNN)  
 **Window Sizes:** 1s & 4s  

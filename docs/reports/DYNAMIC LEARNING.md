@@ -1,5 +1,16 @@
 # Dynamic Learning Analysis: Attempts 41-46
 
+> [!NOTE]
+> **Historical lab-notebook report — superseded.** This file records the state of the
+> work on the date shown, and is kept for the research record. Its numbers reflect the
+> configuration and evaluation protocol *at the time of writing*; the current results are
+> the table in the [README](../../README.md#4-headline-results), and the narrative that
+> connects these reports is [`RESEARCH_HISTORY.md`](../../RESEARCH_HISTORY.md).
+>
+> These runs **predate the validation-split fix**: their best epoch was selected on the
+> test split, so the accuracies below are optimistically biased. See the README's
+> *Evaluation integrity* note before quoting any figure from this page.
+
 This document tracks the evolution of the model architecture from static GCNs to dynamic, attention-based systems. The primary goal during this phase was to solve inter-subject variability (specifically Subject 12's "black hole" and Subject 10's noise) without manual feature engineering.
 
 ---

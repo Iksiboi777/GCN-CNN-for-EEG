@@ -335,9 +335,16 @@ unlearnable prior; it cannot be bent to fit one subject's idiosyncratic noise, s
 *regularises by refusing to overfit*. Every failure in this log, all eight weeks of them,
 was ultimately the same failure — the model overfitting to the subject, the session, the
 artifact, the confound — and the architecture that generalised best was the one with the
-least freedom to do it. The full final tables (means, standard deviations, per-fold
-breakdowns) live in the [README](README.md); the point here is the *shape* of the result,
-not the digits.
+least freedom to do it. The point here is the *shape* of the result, not the digits.
+
+> **Where the digits live.** The summary table is in the
+> [README](README.md#4-headline-results). The raw run artifacts it was computed from
+> (`Results/**/LOSO_Global_Summary.txt`) are **not committed** — `Results/` is gitignored
+> as regenerable output, and the final sweeps were run on cloud/GPU machines rather than
+> in this working copy. So the README table is currently a *reported* result, not one a
+> reader can re-derive from files in this repository; regenerating it means re-running the
+> sweeps against SEED. This is also why those numbers must be re-measured after the
+> validation-split fix — see the README's *Evaluation integrity* note.
 
 ---
 
