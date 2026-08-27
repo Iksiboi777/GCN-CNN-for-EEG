@@ -32,7 +32,7 @@ from eeg_gnn.config import LOCS_FILE, TrainConfig
 from eeg_gnn.data.seed import SeedBundle
 from eeg_gnn.graph import get_knn_adjacency_matrix
 from eeg_gnn.models import MODEL_TYPES
-from eeg_gnn.train import run_session_holdout, run_single_subject_fold
+from eeg_gnn.train import _aggregate_loso, run_session_holdout, run_single_subject_fold
 
 NODES, FEATS, CLASSES, SUBJECTS = 62, 10, 3, 3
 PER_GROUP = 12  # samples per (subject, session); cycles through all 3 classes
@@ -121,3 +121,71 @@ def test_single_loso_fold_runs(bundle, edge_index, tmp_path, monkeypatch, strict
     params = tmp_path / "Params"
     assert params.is_dir()
     assert any(p.suffix == ".pth" for p in params.rglob("*"))  # fold checkpoint saved
+
+
+def _run_fold(subject_id, bundle, edge_index, model_name):
+    """Drive one real LOSO fold on the synthetic bundle."""
+    run_single_subject_fold(
+        subject_id=subject_id, cfg=_tiny_cfg("GCN"),
+        X_full=torch.tensor(bundle.X, dtype=torch.float32),
+        y_full=torch.tensor(bundle.y, dtype=torch.long),
+        sub_full=torch.tensor(bundle.subjects, dtype=torch.long),
+        base_edge_index=edge_index, run_id=1, model_name=model_name,
+    )
+
+
+def test_loso_fold_writes_the_file_the_aggregator_reads(
+    bundle, edge_index, tmp_path, monkeypatch, strict_console
+):
+    """Regression guard: the fold must write ``final_test_preds_sub<k>.npy``.
+
+    ``_aggregate_loso`` reads exactly this path. When the engine did not write it,
+    every fold counted as missing and the global summary reported 0.00% -- while
+    the old assertions (any ``.npy`` exists) still passed.
+    """
+    monkeypatch.chdir(tmp_path)
+    _run_fold(1, bundle, edge_index, "GCN_aggr")
+
+    res = (tmp_path / "Results" / "GCN_aggr" / "Attempt_1_LOSO_Parallel"
+           / "Subject_1" / "final_test_preds_sub1.npy")
+    assert res.exists(), "fold did not write the predictions file the aggregator reads"
+
+    data = np.load(res, allow_pickle=True).item()
+    assert {"preds", "true", "acc"} <= set(data)
+    assert len(data["preds"]) == len(data["true"]) > 0
+
+
+def test_best_epoch_is_not_selected_on_the_test_split(
+    bundle, edge_index, tmp_path, monkeypatch, strict_console
+):
+    """The fold must select its checkpoint on a validation split, not the test fold."""
+    monkeypatch.chdir(tmp_path)
+    _run_fold(1, bundle, edge_index, "GCN_noleak")
+
+    data = np.load(
+        tmp_path / "Results" / "GCN_noleak" / "Attempt_1_LOSO_Parallel"
+        / "Subject_1" / "final_test_preds_sub1.npy", allow_pickle=True).item()
+    assert data["leaky_selection"] is False
+    assert data["selection_split"] == "Val"
+
+
+def test_loso_aggregation_produces_a_real_score(
+    bundle, edge_index, tmp_path, monkeypatch, strict_console
+):
+    """All folds -> a global summary with a non-zero mean and every subject present."""
+    monkeypatch.chdir(tmp_path)
+    for sid in range(1, SUBJECTS + 1):
+        _run_fold(sid, bundle, edge_index, "GCN_full")
+
+    _aggregate_loso(_tiny_cfg("GCN"), list(range(1, SUBJECTS + 1)), 1, "GCN_full")
+
+    summary = (tmp_path / "Results" / "GCN_full" / "Attempt_1_LOSO_Parallel"
+               / "LOSO_Global_Summary.txt")
+    assert summary.exists()
+    text = summary.read_text()
+    assert "Global LOSO Average: 0.00%" not in text
+    assert f"Folds aggregated: {SUBJECTS}/{SUBJECTS}" in text
+    assert "MISSING FOLDS" not in text
+    assert "LEAKY SELECTION" not in text
+    for sid in range(1, SUBJECTS + 1):
+        assert f"Subject {sid}:" in text

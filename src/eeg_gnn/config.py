@@ -76,6 +76,18 @@ class TrainConfig:
     # Feature engineering
     rolling_var_window: int = 3
 
+    # Model selection / evaluation integrity
+    #
+    # The "best epoch" checkpoint is chosen on a validation split that is disjoint
+    # from the test split, so the reported score is genuinely held out.
+    #   LOSO (sub_indep):  val_subjects training subjects are held out for selection.
+    #   Session-Holdout:   val_fraction of the training TRIALS is held out.
+    # Trial-wise (not sample-wise) splitting keeps windows from the same film clip
+    # out of both sides, which would otherwise leak through temporal correlation.
+    val_subjects: int = 2
+    val_fraction: float = 0.15
+    seed: int = 42
+
     # Parallelism (LOSO)
     max_parallel: int = 3
 

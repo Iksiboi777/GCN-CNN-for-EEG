@@ -311,17 +311,35 @@ class TrainingManager:
             print(f"Could not generate plot: {e}")
 
 # --- 3. The Master Loop (Restored & Updated) ---
-def train_model_with_interrupt(model, train_loader, test_loader, optimizer, 
-                               criterion, scheduler, epochs, device, results_dir, 
-                               params_dir, errors_dir, subject_tag, base_edge_index, 
-                               evaluate_fn, hyperparams=None, in_features=5, patience=20):
+def train_model_with_interrupt(model, train_loader, test_loader, optimizer,
+                               criterion, scheduler, epochs, device, results_dir,
+                               params_dir, errors_dir, subject_tag, base_edge_index,
+                               evaluate_fn, hyperparams=None, in_features=5, patience=20,
+                               val_loader=None, final_preds_path=None):
     """
     Orchestrates the full training process.
-    - Calls train_epoch() for the logic.
-    - Handles Saving, History, and Interrupts via TrainingManager.
+
+    Model selection -- the "best epoch" checkpoint -- is driven by ``val_loader``,
+    which MUST be disjoint from ``test_loader``. The test set is evaluated exactly
+    once, after training has finished, to produce the reported score.
+
+    Passing ``val_loader=None`` falls back to selecting the best epoch on the test
+    set itself. That is a data leak: the reported accuracy becomes a maximum over
+    epochs on the very data being reported, and is optimistically biased. The
+    fallback is retained only so that old call sites fail loudly rather than
+    silently; it prints a warning and tags the saved artifacts as leaky.
     """
     manager = TrainingManager(results_dir, params_dir, errors_dir, model, args=hyperparams)
-    
+
+    leaky = val_loader is None
+    if leaky:
+        print("[WARNING] No val_loader supplied -- best-epoch selection will use the "
+              "TEST set. The reported accuracy is optimistically biased and must not "
+              "be published as a held-out score.")
+        selection_loader, selection_name = test_loader, "Test(LEAKY)"
+    else:
+        selection_loader, selection_name = val_loader, "Val"
+
     print("Starting Training... (Press Ctrl+C to stop and save)")
     start_time = time.time()
     patience_counter = 0
@@ -330,67 +348,84 @@ def train_model_with_interrupt(model, train_loader, test_loader, optimizer,
         for epoch in range(1, epochs + 1):
             epoch_start = time.time()
             train_loss, train_acc = train_epoch(model, train_loader, optimizer, criterion, device, base_edge_index, in_features)
-            
+
             capture = (epoch % 10 == 0) or (epoch == epochs)
-            # Safe call to evaluate_fn
-            eval_res = evaluate_fn(model, test_loader, base_edge_index, criterion, device, in_features, return_preds=True, return_embeddings=capture)
-            
+            # Evaluated on the SELECTION split only -- never the test split.
+            eval_res = evaluate_fn(model, selection_loader, base_edge_index, criterion, device, in_features, return_preds=True, return_embeddings=capture)
+
             if capture:
                 val_loss, val_acc, preds, labels, embs = eval_res
                 manager.update_detailed_history(epoch, preds, embs)
             else:
                 val_loss, val_acc, preds, labels = eval_res
                 manager.update_detailed_history(epoch, preds, None)
-            
+
             manager.update_history(train_loss, train_acc, val_loss, val_acc)
             improved = manager.save_checkpoint(val_acc, epoch)
-            
-            
+
             current_lr = optimizer.param_groups[0]['lr']
             epoch_str = f"Epoch {epoch}/{epochs}"
             time_str = f"({time.time() - epoch_start:.1f}s)"
             lr_str = f"LR: {current_lr:.6f}"
-            perf_str = f"Train Loss: {train_loss:.4f} Acc: {train_acc:.2f}% | Val Loss: {val_loss:.4f} Acc: {val_acc:.2f}%"
-            
+            perf_str = (f"Train Loss: {train_loss:.4f} Acc: {train_acc:.2f}% | "
+                        f"{selection_name} Loss: {val_loss:.4f} Acc: {val_acc:.2f}%")
+
             log_line = f"{subject_tag} {epoch_str} {time_str} | {lr_str} | {perf_str}"
-            
+
             if improved:
                 # Add a visual indicator for new best models
                 log_line += f"  *** BEST (Ep {epoch})"
-                # patience_counter = 0 
+                # patience_counter = 0
             else:
                 pass
                 # patience_counter += 1
-            
+
             print(log_line)
-            
+
             # --- Fix: Handle different scheduler types ---
             if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
                 scheduler.step(val_loss)
             else:
                 scheduler.step()
-            
+
             # if patience_counter >= patience:
             #     print("Early stopping triggered.")
             #     break
-                    
+
     except KeyboardInterrupt:
         manager.handle_interrupt()
 
+    print("")
+    print(f"Running Final Evaluation on Best Model (epoch {manager.best_epoch}, "
+          f"selected on {selection_name})...")
 
-    print("\nRunning Final Evaluation on Best Model...")
-    
     try:
         model.load_state_dict(manager.best_model_wts)
         test_loss, test_acc, preds, true_labels = evaluate_fn(
             model, test_loader, base_edge_index, criterion, device, in_features, return_preds=True, return_embeddings=False
         )
-        
+
         print(f"Final Test Loss: {test_loss:.4f} | Test Acc: {test_acc:.2f}%")
         manager.save_final_results(preds, true_labels)
+
+        # Written for the LOSO aggregator (train._aggregate_loso). Without this
+        # file every fold is reported as missing and the global summary is 0.00%.
+        if final_preds_path:
+            os.makedirs(os.path.dirname(final_preds_path), exist_ok=True)
+            np.save(final_preds_path, {
+                'preds': preds,
+                'true': true_labels,
+                'acc': test_acc,
+                'loss': test_loss,
+                'best_epoch': manager.best_epoch,
+                'selection_split': selection_name,
+                'leaky_selection': leaky,
+            })
+            print(f"Saved fold predictions -> {final_preds_path}")
     except Exception as e:
-        print(f"\n[WARNING] Could not run final evaluation (Workers likely dead): {e}")
+        print("")
+        print(f"[WARNING] Could not run final evaluation (Workers likely dead): {e}")
         print("Saving best model weights manually...")
         torch.save(manager.best_model_wts, os.path.join(manager.params_dir, "best_model_rescue.pth"))
-    
+
     print(f"Total Time: {time.time() - start_time:.2f}s")
