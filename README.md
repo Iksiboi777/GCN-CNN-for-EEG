@@ -59,9 +59,29 @@ Mean accuracy (%), 1-second windows, best configuration per model:
 
 **LOSO** = Leave-One-Subject-Out (train on 14 subjects, test on the unseen 15th). The **SH→LOSO drop** is the cross-subject generalization gap — the quantity that matters most for transfer.
 
+> [!IMPORTANT]
+> **Evaluation integrity — these figures are pending re-measurement.**
+> The runs that produced the table above selected each run's *best epoch* on the
+> **test** split: training evaluated the held-out fold every epoch and kept the
+> highest-scoring checkpoint. That is model selection on the reported data, so the
+> numbers are **optimistically biased by an unknown margin** and should be read as an
+> upper bound, not a held-out score.
+>
+> The code no longer does this. Best-epoch selection now runs on a **validation split
+> that is disjoint from the test split** — for LOSO, `--val_subjects` (default 2) whole
+> subjects held out of the training pool; for Session-Holdout, `--val_fraction`
+> (default 0.15) of the training *trials*. Each test fold is evaluated exactly once,
+> after training. `LOSO_Global_Summary.txt` now states which rule was used, and refuses
+> to present a silent number if any fold leaked or is missing.
+>
+> The table will be replaced once the sweeps have been re-run under the corrected
+> protocol. Expect the corrected LOSO figures to be **lower**; the *ordering* of the
+> three architectures and the SH→LOSO gap analysis are the load-bearing claims and are
+> less sensitive to this than the absolute accuracies.
+
 **What the comparison shows** (see [§9](#9-results--interpretation)): the *static physical prior* is hard to beat and transfers best; learning the graph (DGCNN) buys **stability**, not peak accuracy; purely local aggregation (SAGE) transfers worst. Positive-class F1 is ~0.92 across all models, while **neutral↔negative separation** (F1 as low as 0.62) is the universal failure mode.
 
-**Reproducing these numbers.** The table reports **mean accuracy**: for LOSO it is the mean over the 15 leave-one-subject-out folds (σ = the across-fold spread), and for Session-Holdout it is a single train-on-S1+S2 / test-on-S3 run. The headline **GCN_DE / LOSO** row is produced by the default command — `eeg-gnn-train --model_type GCN --window_size 1s --mode sub_indep` (10 features, SE on); the other two rows are the same command with `--model_type ADAPTIVE_DGCNN` or `--model_type GraphSAGE`, each at its own best configuration (the per-model SE / feature settings are detailed in [§9](#9-results--interpretation) and the thesis, not asserted here). **Runs are not seeded**, so reproduction is statistical, not bit-exact: expect run-to-run variation around the reported means, of the order of the σ column, rather than identical digits.
+**Reproducing these numbers.** The table reports **mean accuracy**: for LOSO it is the mean over the 15 leave-one-subject-out folds (σ = the across-fold spread), and for Session-Holdout it is a single train-on-S1+S2 / test-on-S3 run. The headline **GCN_DE / LOSO** row is produced by the default command — `eeg-gnn-train --model_type GCN --window_size 1s --mode sub_indep` (10 features, SE on); the other two rows are the same command with `--model_type ADAPTIVE_DGCNN` or `--model_type GraphSAGE`, each at its own best configuration (the per-model SE / feature settings are detailed in [§9](#9-results--interpretation) and the thesis, not asserted here). Runs are **seeded** (`--seed`, default 42), which fixes the validation split and the initialisation; exact bit-for-bit reproduction across different hardware, CUDA versions or fold-parallelism settings is still not guaranteed, so expect small run-to-run variation rather than identical digits. Note that the numbers above predate both the seeding and the validation-split fix — see the integrity note.
 
 ## 5. Architecture
 
@@ -103,7 +123,7 @@ The three architectures:
 ### The author's own contribution (verified against the code)
 
 - **A controlled three-paradigm comparative framework.** The scientific design — pitting a static-prior GCN, a hybrid learned-graph DGCNN, and an inductive GraphSAGE against each other under one harness, one feature set, one ablation grid — is the thesis's core original act. (`src/eeg_gnn/models/registry.py`, `train.py`.)
-- **A two-protocol evaluation harness with a parallel LOSO engine.** Leave-One-Subject-Out is run as **15 concurrent folds** via `torch.multiprocessing` with shared-memory tensors and per-fold GPU assignment, then a custom **aggregation engine** collects per-subject predictions from disk into a global mean±σ report, sklearn classification report, and confusion matrix. Session-Holdout (train S1+S2, test S3) shares the same training core. (`run_loso`, `_aggregate_loso`, `run_session_holdout` in `src/eeg_gnn/train.py`.)
+- **A two-protocol evaluation harness with a parallel LOSO engine.** Leave-One-Subject-Out is run as **15 concurrent folds** via `torch.multiprocessing` with shared-memory tensors and per-fold GPU assignment, then a custom **aggregation engine** collects per-subject predictions from disk into a global mean±σ report, sklearn classification report, and confusion matrix. Session-Holdout (train S1+S2, test S3) shares the same training core. Best-epoch selection runs on a validation split disjoint from the test split — subject-wise for LOSO, trial-wise for Session-Holdout — so each test fold is scored exactly once. (`run_loso`, `_aggregate_loso`, `run_session_holdout` in `src/eeg_gnn/train.py`.)
 - **The AGLI input-calibration block** — a learnable per-(channel, band) affine front-end whose gain `γ` is driven toward zero on unreliable sensors by a dedicated heavier weight-decay group in the optimizer. (`AdaptiveGraphInputLayer` in each model file; `build_optimizer` in `train.py`.)
 - **The Subject-Bias logit embedding** — a per-subject embedding (initialised to zero) added to the classifier logits to absorb each recording's baseline offset; present and identically wired in all three models. (`subject_bias` in `gcn_de.py`, `adaptive_dgcnn.py`, `graphsage.py`.)
 - **The attentional read-out wiring** — a gated attentional aggregation (vs. plain mean pooling) used as the graph read-out, plus, in the GCN, an attention-pooled "squeeze" inside the SE block so the global context ignores noisy nodes. (`final_pool` / `global_pool` / `gate` and `SEBlock` in the model files.)
@@ -120,6 +140,8 @@ The three architectures:
 SEED requires an **application and EULA** to the SJTU BCMI Lab — it cannot be redistributed here. Request access via the official page:
 
 > **SEED dataset (SJTU BCMI Lab):** https://bcmi.sjtu.edu.cn/home/seed/
+
+> **Note on `docs/dataset/`.** That folder carries a few small SEED *reference* files (channel order, stimulation/label order, subject-gender key) purely so the loader's conventions are readable without dataset access. No EEG recordings or features are redistributed here. If the BCMI Lab considers even this metadata covered by the EULA, open an issue and it will be removed.
 
 Once granted, place the **ExtractedFeatures** DE set under `Data/` in this exact layout (directory names are read by the loader; `<window>` ∈ `{1s, 2s, 4s}`):
 
@@ -189,12 +211,15 @@ eeg-gnn-train --model_type GraphSAGE --window_size 1s --mode sub_indep --in_feat
 | `--use_se` / `--no_se` | SE **on** by default | toggle the Squeeze-and-Excitation block |
 | `--use_doubling` | off by default | double the hidden width at each GNN layer |
 | `--max_parallel` | `3` (default) | number of LOSO folds run concurrently |
+| `--val_subjects` | `2` (default) | **LOSO:** training subjects held out to pick the best epoch |
+| `--val_fraction` | `0.15` (default) | **Session-Holdout:** fraction of training *trials* held out for the same |
+| `--seed` | `42` (default) | RNG seed; fixes the validation split and initialisation |
 
 ### 7.4 What you get when you run it
 
 Training writes to **gitignored** (regenerable) directories at the repo root:
 
-- **`Results/<MODEL>_DE_<window>/Attempt_<N>_…/`** — LOSO runs use the suffix `…_LOSO_Parallel` and write per-subject predictions `Subject_<k>/final_test_preds_sub<k>.npy` plus a **`LOSO_Global_Summary.txt`** (global mean ± σ accuracy, per-subject accuracies, sklearn classification report, confusion matrix). Session-Holdout runs use the suffix `…_Phase2`.
+- **`Results/<MODEL>_DE_<window>/Attempt_<N>…/`** — LOSO runs use the suffix `…_LOSO_Parallel` and write per-subject predictions `Subject_<k>/final_test_preds_sub<k>.npy` (each holding `preds`, `true`, `acc`, `best_epoch`, and the selection rule used) plus a **`LOSO_Global_Summary.txt`** (global mean ± σ accuracy, folds aggregated, per-subject accuracies, sklearn classification report, confusion matrix). The summary states explicitly whether the best epoch was chosen on a held-out validation split, and flags any fold that leaked or failed to finish — an incomplete sweep is reported as invalid rather than silently averaged. Session-Holdout runs use the suffix `…_Phase2`.
 - **`Params/…`** — model checkpoints. **`Errors/…`** — training/validation curves and logs.
 - Each run gets an **auto-incrementing `Attempt_<N>`** id per window size, tracked in `run_config.json`.
 
@@ -239,11 +264,12 @@ The findings resolve onto **three orthogonal axes**, not a ranking:
 
 **Block ablation.** Subject Bias is the highest-leverage stabiliser for cross-session/cross-subject shift; SE is a double-edged regulator (helps DGCNN at 10 features, *hurts* GCN at 4 s / 5 features); AGLI provides per-sensor calibration; attentional read-out adds artifact robustness. Subject 12 is the hardest fold across every model (atypical neural patterns; see [`docs/reports/HARD_SUBJECTS_ANALYSIS.md`](docs/reports/HARD_SUBJECTS_ANALYSIS.md)).
 
-Full per-configuration tables and learning-curve analyses are in [`docs/reports/`](docs/reports/), distilled in the [research history](RESEARCH_HISTORY.md), and detailed in the thesis itself (archived on the [public FER repository](https://repozitorij.fer.unizg.hr/)).
+**Where the underlying numbers live — and don't.** The per-configuration tables are in the **thesis** (archived on the [public FER repository](https://repozitorij.fer.unizg.hr/)); the reasoning that produced them is in the [research history](RESEARCH_HISTORY.md). [`docs/reports/`](docs/reports/) holds the **dated lab-notebook reports** written along the way — they are diagnostic narratives from earlier configurations, each carries a “superseded” banner, and their figures (mostly 50–67%, Session-Holdout) do **not** correspond to the table in §4. The raw run artifacts behind §4 are **not committed**: `Results/` is gitignored as regenerable output and the final sweeps ran on cloud/GPU machines, so §4 is a *reported* result rather than one re-derivable from files here. The one curated CSV that is committed, [`docs/results/`](docs/results/), is Session-Holdout pooled over 7 attempts — read [its README](docs/results/README.md) before comparing it to §4.
 
 ## 10. Limitations
 
-- **Best LOSO accuracy (~82%) trails SOTA SEED domain-adaptation methods (~90–93%).** No domain adaptation is used here; Subject Bias is a deliberately primitive form of source conditioning (see §11).
+- **The reported accuracies are pending re-measurement.** They were produced with best-epoch selection on the test split (see the integrity note in [§4](#4-headline-results)) and are therefore an upper bound. The code has been corrected; the numbers have not yet been re-run.
+- **Best LOSO accuracy (~82%) trails SOTA SEED domain-adaptation methods (~90–93%).** No domain adaptation is used here; Subject Bias is a deliberately primitive form of source conditioning (see §11). The gap is likely *wider* than stated, given the point above.
 - **Neutral↔negative separation is the persistent weakness** (F1 as low as 0.62), even where positive-class F1 is ~0.92.
 - **Some subjects are intrinsically hard** (notably Subject 12): atypical neural patterns and channel artifacts cap per-fold accuracy regardless of architecture.
 - **Reproduction depends on access-controlled data** (SEED EULA), and the **`2s`/`4s` windowed sets are custom** and not regenerable from the archival prep scripts as-is (§7.1).

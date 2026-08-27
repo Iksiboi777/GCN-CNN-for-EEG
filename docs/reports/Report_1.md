@@ -1,5 +1,16 @@
 # Final Research Report: Adaptive Graph Convolutional Networks for EEG Emotion Recognition (SEED Dataset)
 
+> [!NOTE]
+> **Historical lab-notebook report — superseded.** This file records the state of the
+> work on the date shown, and is kept for the research record. Its numbers reflect the
+> configuration and evaluation protocol *at the time of writing*; the current results are
+> the table in the [README](../../README.md#4-headline-results), and the narrative that
+> connects these reports is [`RESEARCH_HISTORY.md`](../../RESEARCH_HISTORY.md).
+>
+> These runs **predate the validation-split fix**: their best epoch was selected on the
+> test split, so the accuracies below are optimistically biased. See the README's
+> *Evaluation integrity* note before quoting any figure from this page.
+
 **Date:** January 9, 2026  
 **Subject:** Cross-Session Generalization, Forensic Diagnostics, and Adaptive Neural Modeling  
 **Key Result:** 83% Average Accuracy via Adaptive GCN & Feature Integration  

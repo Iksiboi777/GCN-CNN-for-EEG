@@ -1,5 +1,16 @@
 # Feature Engineering Strategy & Dataset Pathology Analysis (v2)
 
+> [!NOTE]
+> **Historical lab-notebook report — superseded.** This file records the state of the
+> work on the date shown, and is kept for the research record. Its numbers reflect the
+> configuration and evaluation protocol *at the time of writing*; the current results are
+> the table in the [README](../../README.md#4-headline-results), and the narrative that
+> connects these reports is [`RESEARCH_HISTORY.md`](../../RESEARCH_HISTORY.md).
+>
+> These runs **predate the validation-split fix**: their best epoch was selected on the
+> test split, so the accuracies below are optimistically biased. See the README's
+> *Evaluation integrity* note before quoting any figure from this page.
+
 **Date:** December 24, 2025  
 **Project Phase:** Advanced Feature Analysis & Pipeline Refinement  
 **Focus:** Solving the "Hard" Subjects (02, 12, 13, 07) and standardizing the pipeline for "Easy" Subjects (14, 15, 06).
